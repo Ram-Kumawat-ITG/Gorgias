@@ -55,6 +55,32 @@ async def login(form: OAuth2PasswordRequestForm = Depends()):
     }
 
 
+@router.post("/signup")
+async def signup(form: OAuth2PasswordRequestForm = Depends()):
+    db = get_db()
+    existing = await db.agents.find_one({"email": form.username})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    from app.models.agent import AgentInDB
+    agent = AgentInDB(
+        email=form.username,
+        full_name=form.username.split("@")[0].replace(".", " ").title(),
+        role="agent",
+        hashed_password=hash_password(form.password),
+    )
+    await db.agents.insert_one(agent.model_dump())
+    return {
+        "access_token": create_token(agent.id),
+        "token_type": "bearer",
+        "agent": {
+            "id": agent.id,
+            "email": agent.email,
+            "full_name": agent.full_name,
+            "role": agent.role,
+        },
+    }
+
+
 @router.get("/me")
 async def me(agent=Depends(get_current_agent)):
     return {k: v for k, v in agent.items() if k not in ["_id", "hashed_password"]}
