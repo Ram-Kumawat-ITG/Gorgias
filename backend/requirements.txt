@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+motor
+python-dotenv
+pydantic
+pydantic-settings
+httpx
+python-jose[cryptography]
+passlib[bcrypt]
+apscheduler
+openai
+jinja2
+python-multipart

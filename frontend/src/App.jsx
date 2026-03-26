@@ -1,0 +1,41 @@
+// Root app component — routing with protected routes
+import { Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout';
+import LoginPage from './pages/LoginPage';
+import InboxPage from './pages/InboxPage';
+import TicketDetailPage from './pages/TicketDetailPage';
+import NewTicketPage from './pages/NewTicketPage';
+import MacrosPage from './pages/MacrosPage';
+import AutomationsPage from './pages/AutomationsPage';
+import SLAPoliciesPage from './pages/SLAPoliciesPage';
+import AnalyticsPage from './pages/AnalyticsPage';
+
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem('token');
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/" element={<InboxPage />} />
+        <Route path="/tickets/new" element={<NewTicketPage />} />
+        <Route path="/tickets/:id" element={<TicketDetailPage />} />
+        <Route path="/macros" element={<MacrosPage />} />
+        <Route path="/automations" element={<AutomationsPage />} />
+        <Route path="/sla-policies" element={<SLAPoliciesPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
