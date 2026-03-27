@@ -9,6 +9,10 @@ import NewTicketPage from './pages/NewTicketPage';
 import MacrosPage from './pages/MacrosPage';
 import AutomationsPage from './pages/AutomationsPage';
 import SLAPoliciesPage from './pages/SLAPoliciesPage';
+import CustomersPage from './pages/CustomersPage';
+import CustomerDetailPage from './pages/CustomerDetailPage';
+import OrdersPage from './pages/OrdersPage';
+import OrderDetailPage from './pages/OrderDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 
 function ProtectedRoute({ children }) {
@@ -32,6 +36,10 @@ export default function App() {
         <Route path="/" element={<InboxPage />} />
         <Route path="/tickets/new" element={<NewTicketPage />} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
+        <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/customers/:id" element={<CustomerDetailPage />} />
+        <Route path="/orders" element={<OrdersPage />} />
+        <Route path="/orders/:id" element={<OrderDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
         <Route path="/sla-policies" element={<SLAPoliciesPage />} />

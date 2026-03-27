@@ -1,8 +1,21 @@
-# Customer model — synced from Shopify and cached in MongoDB
+# Customer model — local customers with optional Shopify sync
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 import uuid
+
+
+class CustomerCreate(BaseModel):
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    company: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
+    tags: List[str] = []
+    notes: Optional[str] = None
 
 
 class CustomerInDB(BaseModel):
@@ -10,6 +23,11 @@ class CustomerInDB(BaseModel):
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    company: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
     shopify_customer_id: Optional[str] = None
     total_spent: str = "0.00"
     orders_count: int = 0

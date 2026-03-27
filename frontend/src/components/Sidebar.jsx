@@ -1,11 +1,13 @@
 // Left navigation sidebar — links to all sections + agent info
 import { NavLink } from 'react-router-dom';
-import { Inbox, BarChart3, Zap, Bot, Shield, LogOut } from 'lucide-react';
+import { Inbox, Users, ShoppingBag, BarChart3, Zap, Bot, Shield, LogOut } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
 import clsx from 'clsx';
 
 const NAV_ITEMS = [
   { to: '/', icon: Inbox, label: 'Inbox' },
+  { to: '/customers', icon: Users, label: 'Customers' },
+  { to: '/orders', icon: ShoppingBag, label: 'Orders' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
