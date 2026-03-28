@@ -66,7 +66,7 @@ export default function CustomerHistory({ customerEmail }) {
 
       <div className="max-h-64 overflow-y-auto space-y-2">
         {loading ? (
-          <p className="text-xs text-gray-400 text-center py-4">Loading...</p>
+          <div className="flex items-center justify-center py-4"><div className="w-5 h-5 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
         ) : events.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-4">No activity found</p>
         ) : (

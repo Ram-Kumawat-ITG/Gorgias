@@ -88,7 +88,7 @@ export default function SLAPoliciesPage() {
 
         <div className="card divide-y divide-gray-100">
           {loading ? (
-            <div className="p-8 text-center text-gray-400">Loading...</div>
+            <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
           ) : policies.length === 0 ? (
             <div className="p-8 text-center text-gray-400">No policies yet</div>
           ) : (

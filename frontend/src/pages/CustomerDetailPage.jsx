@@ -98,7 +98,7 @@ export default function CustomerDetailPage() {
       try {
         await api.delete(`/customers/${id}`);
         addToast('Customer deleted from Shopify');
-        setTimeout(() => navigate('/customers'), 600);
+        navigate('/customers');
       } catch (err) {
         addToast(err.response?.data?.detail || 'Failed to delete', 'error');
       }
@@ -106,7 +106,7 @@ export default function CustomerDetailPage() {
   }
 
 
-  if (loading) return <div className="p-8 text-center text-gray-400">Loading customer from Shopify...</div>;
+  if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>;
   if (!data) return <div className="p-8 text-center text-gray-400">Customer not found</div>;
 
   const { customer, orders, ticket_stats } = data;
@@ -139,7 +139,7 @@ export default function CustomerDetailPage() {
           </div>
 
           {ticketsLoading ? (
-            <div className="p-8 text-center text-gray-400 text-sm">Loading tickets...</div>
+            <div className="flex items-center justify-center py-8"><div className="w-6 h-6 border-3 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
           ) : tickets.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-sm">No tickets for this customer</div>
           ) : (
@@ -207,10 +207,10 @@ export default function CustomerDetailPage() {
                     </td>
                     <td className="px-5 py-2.5">
                       <span className={clsx('badge', FIN_COLORS[o.financial_status] || 'bg-gray-100 text-gray-600')}>
-                        {o.financial_status}
+                        {o.financial_status || 'unknown'}
                       </span>
                     </td>
-                    <td className="px-5 py-2.5 text-sm font-medium text-gray-900">${o.total_price}</td>
+                    <td className="px-5 py-2.5 text-sm font-medium text-gray-900">${o.total_price || '0.00'}</td>
                     <td className="px-5 py-2.5 text-xs text-gray-500">
                       {o.created_at ? new Date(o.created_at).toLocaleDateString() : '—'}
                     </td>

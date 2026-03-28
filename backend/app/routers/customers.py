@@ -93,7 +93,8 @@ def _build_shopify_payload(data, include_email: str = None) -> dict:
     if data.company:
         addr["company"] = data.company
 
-    code = (data.country_code or "IN").upper()
+    raw = (data.country_code or "IN").strip()
+    code = _resolve_country_code(raw)
     if addr:
         addr["country_code"] = code
         addr["country"] = COUNTRY_NAMES.get(code, code)
@@ -125,6 +126,23 @@ COUNTRY_NAMES = {
     "CN": "China",
     "KR": "South Korea",
 }
+
+# Reverse lookup: full name → code (case-insensitive)
+_NAME_TO_CODE = {v.lower(): k for k, v in COUNTRY_NAMES.items()}
+
+
+def _resolve_country_code(raw: str) -> str:
+    """Accept either 'US' or 'United States' and always return the 2-letter code."""
+    upper = raw.upper()
+    if upper in COUNTRY_NAMES:
+        return upper  # already a valid code like "US"
+    lower = raw.lower()
+    if lower in _NAME_TO_CODE:
+        return _NAME_TO_CODE[lower]  # "united states" → "US"
+    # If 2 chars, assume it's a code Shopify knows even if we don't have it mapped
+    if len(raw) == 2:
+        return upper
+    return "IN"  # fallback
 
 
 # ─── LIST ───

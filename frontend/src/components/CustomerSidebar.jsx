@@ -27,7 +27,7 @@ export default function CustomerSidebar({ ticket }) {
       .finally(() => setLoading(false));
   }, [ticket?.customer_email]);
 
-  if (loading) return <div className="card p-4 text-sm text-gray-400">Loading customer...</div>;
+  if (loading) return <div className="card p-4 flex items-center justify-center"><div className="w-5 h-5 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>;
   if (!customer) return <div className="card p-4 text-sm text-gray-400">No customer data</div>;
 
   return (

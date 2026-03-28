@@ -13,6 +13,8 @@ import CustomersPage from './pages/CustomersPage';
 import CustomerDetailPage from './pages/CustomerDetailPage';
 import OrdersPage from './pages/OrdersPage';
 import OrderDetailPage from './pages/OrderDetailPage';
+import ReturnsPage from './pages/ReturnsPage';
+import ReturnDetailPage from './pages/ReturnDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 
 function ProtectedRoute({ children }) {
@@ -40,6 +42,8 @@ export default function App() {
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/orders/:id" element={<OrderDetailPage />} />
+        <Route path="/returns" element={<ReturnsPage />} />
+        <Route path="/returns/:id" element={<ReturnDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
         <Route path="/sla-policies" element={<SLAPoliciesPage />} />

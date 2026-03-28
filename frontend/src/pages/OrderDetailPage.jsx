@@ -2,12 +2,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Truck, Ban, DollarSign, RefreshCw, Send, Trash2,
+  ArrowLeft, Truck, Ban, DollarSign, RefreshCw, Send, Trash2, RotateCcw,
   CheckCircle, X, Package, CreditCard, FileText, Pencil, Search, Plus, Save, XCircle,
 } from 'lucide-react';
 import api from '../api/client';
 import clsx from 'clsx';
 import { useToast, ToastContainer } from '../components/Toast';
+import InitiateReturnModal from '../components/InitiateReturnModal';
 
 const FIN = {
   paid: 'bg-green-100 text-green-700', pending: 'bg-yellow-100 text-yellow-700',
@@ -34,6 +35,7 @@ export default function OrderDetailPage() {
   const [refundModal, setRefundModal] = useState(false);
   const [fulfillModal, setFulfillModal] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(false);
+  const [returnModal, setReturnModal] = useState(false);
 
   // Cancel form
   const [cancelReason, setCancelReason] = useState('other');
@@ -72,8 +74,10 @@ export default function OrderDetailPage() {
       const res = await api.get(endpoint);
       setOrder(res.data);
       // Pre-fill refund items
-      if (res.data.line_items) {
+      if (res.data.line_items && res.data.line_items.length > 0) {
         setRefundItems(res.data.line_items.map(li => ({ line_item_id: li.id, quantity: 0, max: li.quantity })));
+      } else {
+        setRefundItems([]);
       }
       if (res.data.email) setInvoiceTo(res.data.email);
     } catch {
@@ -600,7 +604,7 @@ export default function OrderDetailPage() {
             {/* Regular order actions */}
             {isOrder && !isCancelled && (
               <>
-                {!isFulfilled && (
+                {!isFulfilled && !isRefunded && (
                   <button onClick={() => setFulfillModal(true)} disabled={!!actionLoading}
                     className="btn-primary w-full flex items-center justify-center gap-2 text-sm">
                     <Truck size={15} /> Fulfill Items
@@ -622,6 +626,12 @@ export default function OrderDetailPage() {
                   className="btn-secondary w-full flex items-center justify-center gap-2 text-sm text-red-600 border-red-200 hover:bg-red-50">
                   <Ban size={15} /> Cancel Order
                 </button>
+                {isPaid && (
+                  <button onClick={() => setReturnModal(true)} disabled={!!actionLoading}
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-sm">
+                    <RotateCcw size={15} /> Initiate Return
+                  </button>
+                )}
               </>
             )}
             {isOrder && isCancelled && (
@@ -781,6 +791,19 @@ export default function OrderDetailPage() {
           <ModalFooter onClose={() => setInvoiceModal(false)} onAction={handleSendInvoice}
             loading={actionLoading === 'Send invoice'} label="Send Invoice" />
         </Modal>
+      )}
+
+      {/* Initiate Return Modal */}
+      {returnModal && isOrder && (
+        <InitiateReturnModal
+          order={order}
+          onClose={() => setReturnModal(false)}
+          onSuccess={() => {
+            setReturnModal(false);
+            addToast('Return request created');
+            navigate('/returns');
+          }}
+        />
       )}
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />

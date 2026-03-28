@@ -1,13 +1,12 @@
-# AI service — generates GPT-4 reply suggestions using ticket + order context
-from openai import AsyncOpenAI
+# AI service — generates reply suggestions using Google Gemini (free) or OpenAI (fallback)
+import httpx
 from app.config import settings
 from app.database import get_db
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
 
 async def generate_reply_suggestion(ticket_id: str) -> str:
-    if not settings.openai_api_key:
-        return "AI suggestions are unavailable — OpenAI API key not configured."
-
     db = get_db()
     ticket = await db.tickets.find_one({"id": ticket_id})
     if not ticket:
@@ -41,35 +40,108 @@ async def generate_reply_suggestion(ticket_id: str) -> str:
             order_context += f", tracking: {o['tracking_url']}"
         order_context += "\n"
 
-    system_prompt = (
+    prompt = (
         "You are a friendly, professional customer support agent. "
         "Write a helpful reply to the customer based on the conversation and order context below. "
         "Rules: Keep your reply under 150 words. Never fabricate order details — only reference "
-        "information provided in the order context. Be empathetic and solution-oriented."
+        "information provided in the order context. Be empathetic and solution-oriented.\n\n"
+        f"Ticket subject: {ticket.get('subject', '')}\n"
+        f"Customer: {ticket.get('customer_email', '')}\n\n"
+        f"Conversation history:\n{conversation}\n\n"
+        f"Order context:\n{order_context if order_context else 'No orders found.'}\n\n"
+        "Write a professional reply to the customer:"
     )
 
-    user_prompt = f"""Ticket subject: {ticket.get('subject', '')}
-Customer: {ticket.get('customer_email', '')}
+    # Try Grok first (free), then Gemini, then OpenAI
+    if settings.grok_api_key:
+        result = await _call_grok(prompt)
+        if result:
+            return result
 
-Conversation history:
-{conversation}
+    if settings.gemini_api_key:
+        result = await _call_gemini(prompt)
+        if result:
+            return result
 
-Order context:
-{order_context if order_context else 'No orders found.'}
+    if settings.openai_api_key:
+        result = await _call_openai(prompt)
+        if result:
+            return result
 
-Write a professional reply to the customer:"""
+    return "AI suggestions unavailable — set GROK_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY in .env"
 
+
+async def _call_grok(prompt: str) -> str:
+    """Call xAI Grok API (free tier: $25/month free credits)."""
     try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.grok_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "grok-3-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 400,
+                    "temperature": 0.7,
+                },
+                timeout=30.0,
+            )
+            if r.status_code != 200:
+                print(f"Grok API error ({r.status_code}): {r.text[:200]}")
+                return None
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Grok error: {e}")
+        return None
+
+
+async def _call_gemini(prompt: str) -> str:
+    """Call Google Gemini API (free tier: 15 RPM, 1500 RPD)."""
+    try:
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 400,
+                "temperature": 0.7,
+            },
+        }
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{GEMINI_URL}?key={settings.gemini_api_key}",
+                json=payload,
+                timeout=30.0,
+            )
+            if r.status_code != 200:
+                print(f"Gemini API error ({r.status_code}): {r.text[:200]}")
+                return None
+            data = r.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    return parts[0].get("text", "").strip()
+        return None
+    except Exception as e:
+        print(f"Gemini error: {e}")
+        return None
+
+
+async def _call_openai(prompt: str) -> str:
+    """Call OpenAI API (paid)."""
+    try:
+        from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=400,
             temperature=0.7,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"AI suggestion unavailable: {str(e)}"
+        print(f"OpenAI error: {e}")
+        return None

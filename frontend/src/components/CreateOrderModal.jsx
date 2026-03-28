@@ -141,7 +141,7 @@ export default function CreateOrderModal({ customerId, customerName, customerEma
     setCreatingDraft(true);
     setError('');
     try {
-      const res = await api.post('/orders/draft', buildPayload());
+      const res = await api.post('/orders/drafts', buildPayload());
       onSuccess(`Draft order ${res.data.name || ''} created on Shopify`);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create draft order');
@@ -182,7 +182,7 @@ export default function CreateOrderModal({ customerId, customerName, customerEma
                   <div ref={dropdownRef} onScroll={handleDropdownScroll}
                     className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-72 overflow-y-auto">
                     {searchLoading && searchResults.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-gray-400">Loading products...</p>
+                      <div className="flex items-center justify-center py-3"><div className="w-5 h-5 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
                     ) : searchResults.length === 0 ? (
                       <p className="px-4 py-3 text-sm text-gray-400">No products found</p>
                     ) : (

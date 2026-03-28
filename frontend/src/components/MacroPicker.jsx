@@ -56,7 +56,7 @@ export default function MacroPicker({ ticketId, onInsert }) {
           </div>
           <div className="max-h-48 overflow-y-auto">
             {loading ? (
-              <p className="p-3 text-xs text-gray-400 text-center">Loading...</p>
+              <div className="flex items-center justify-center p-3"><div className="w-4 h-4 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
             ) : macros.length === 0 ? (
               <p className="p-3 text-xs text-gray-400 text-center">No macros found</p>
             ) : (

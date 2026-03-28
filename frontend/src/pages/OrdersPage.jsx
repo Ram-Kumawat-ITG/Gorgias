@@ -9,6 +9,19 @@ const FIN = {
   paid: 'bg-green-100 text-green-700', pending: 'bg-yellow-100 text-yellow-700',
   refunded: 'bg-red-100 text-red-700', partially_refunded: 'bg-orange-100 text-orange-700',
 };
+const RETURN_TAG_COLORS = {
+  'return-requested': 'bg-yellow-100 text-yellow-700',
+  'return-approved': 'bg-blue-100 text-blue-700',
+  'return-shipped': 'bg-purple-100 text-purple-700',
+  'return-received': 'bg-orange-100 text-orange-700',
+  'return-refunded': 'bg-red-100 text-red-700',
+  'return-replaced': 'bg-teal-100 text-teal-700',
+};
+function getReturnTag(tags) {
+  if (!tags) return null;
+  const arr = tags.split(',').map(t => t.trim());
+  return arr.find(t => t.startsWith('return-')) || null;
+}
 const DRAFT_STATUS = {
   open: 'bg-yellow-100 text-yellow-700', invoice_sent: 'bg-blue-100 text-blue-700',
   completed: 'bg-green-100 text-green-700',
@@ -74,7 +87,9 @@ export default function OrdersPage() {
       {tab === 'orders' && (
         <div className="card divide-y divide-gray-50">
           {loading ? (
-            <div className="p-8 text-center text-gray-400">Loading orders...</div>
+            <div className="flex items-center justify-center py-12">
+              <div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
+            </div>
           ) : orders.length === 0 ? (
             <div className="p-8 text-center text-gray-400">No orders found</div>
           ) : orders.map(o => (
@@ -94,6 +109,11 @@ export default function OrdersPage() {
                   'bg-yellow-100 text-yellow-700': o.fulfillment_status === 'partial',
                   'bg-gray-100 text-gray-600': !o.fulfillment_status,
                 })}>{o.fulfillment_status || 'unfulfilled'}</span>
+                {getReturnTag(o.tags) && (
+                  <span className={clsx('badge', RETURN_TAG_COLORS[getReturnTag(o.tags)] || 'bg-gray-100 text-gray-600')}>
+                    {getReturnTag(o.tags)}
+                  </span>
+                )}
                 <span className="text-sm font-medium text-gray-900 w-20 text-right">${o.total_price}</span>
                 <span className="text-xs text-gray-400 w-24 text-right">
                   {o.created_at ? new Date(o.created_at).toLocaleDateString() : ''}
@@ -109,7 +129,9 @@ export default function OrdersPage() {
       {tab === 'drafts' && (
         <div className="card divide-y divide-gray-50">
           {loading ? (
-            <div className="p-8 text-center text-gray-400">Loading drafts...</div>
+            <div className="flex items-center justify-center py-12">
+              <div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
+            </div>
           ) : drafts.length === 0 ? (
             <div className="p-8 text-center text-gray-400">No draft orders</div>
           ) : drafts.map(d => (

@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     shopify_store_domain: str = ""
     shopify_access_token: str = ""
     openai_api_key: str = ""
+    gemini_api_key: str = ""
+    grok_api_key: str = ""
     secret_key: str = "default-dev-secret-change-in-production-minimum-32-chars"
     mailgun_api_key: str = ""
     mailgun_domain: str = ""

@@ -54,4 +54,7 @@ async def create_indexes():
     await d.automation_rules.create_index([("trigger_event", 1), ("is_active", 1)])
     await d.activity_logs.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
     await d.activity_logs.create_index([("customer_email", 1), ("created_at", -1)])
+    await d.returns.create_index([("status", 1), ("created_at", -1)])
+    await d.returns.create_index([("order_id", 1)])
+    await d.returns.create_index([("customer_email", 1)])
     print("Indexes created")

@@ -28,6 +28,11 @@ class OrderCreatePayload(BaseModel):
     tags: Optional[str] = None
 
 
+class OrderUpdatePayload(BaseModel):
+    note: Optional[str] = None
+    tags: Optional[str] = None
+
+
 class CancelPayload(BaseModel):
     reason: str = "other"  # customer, inventory, fraud, declined, other
     restock: bool = True
@@ -340,9 +345,22 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
             refund_payload["refund"]["note"] = data.note
 
         if data.line_items:
+            # Shopify requires location_id when restocking
+            location_id = None
+            has_restock = any(li.restock for li in data.line_items)
+            if has_restock:
+                locations = await shopify_get("/locations.json")
+                locs = locations.get("locations", [])
+                if locs:
+                    location_id = locs[0]["id"]
+
             refund_payload["refund"]["refund_line_items"] = [
-                {"line_item_id": int(li.line_item_id), "quantity": li.quantity,
-                 "restock_type": "return" if li.restock else "no_restock"}
+                {
+                    "line_item_id": int(li.line_item_id),
+                    "quantity": li.quantity,
+                    "restock_type": "return" if li.restock else "no_restock",
+                    **({"location_id": location_id} if li.restock and location_id else {}),
+                }
                 for li in data.line_items
             ]
 
@@ -353,6 +371,10 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
         calc = await shopify_post(f"/orders/{order_id}/refunds/calculate.json", refund_payload)
         transactions = calc.get("refund", {}).get("transactions", [])
         if transactions:
+            # Fix: Shopify returns kind "suggested_refund" — must change to "refund"
+            for t in transactions:
+                if t.get("kind") == "suggested_refund":
+                    t["kind"] = "refund"
             refund_payload["refund"]["transactions"] = transactions
 
         if data.custom_amount:
