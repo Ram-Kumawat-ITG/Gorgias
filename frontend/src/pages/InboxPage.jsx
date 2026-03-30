@@ -1,8 +1,9 @@
 // Inbox page — ticket list with status tabs, pagination, and priority badges
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import api from '../api/client';
+import { shopifyApi } from '../api/client';
 import SLABadge from '../components/SLABadge';
 import clsx from 'clsx';
 
@@ -13,6 +14,17 @@ const PRIORITY_COLORS = {
   high: 'bg-orange-100 text-orange-700',
   urgent: 'bg-red-100 text-red-700',
 };
+const FINANCIAL_COLORS = {
+  paid: 'bg-green-100 text-green-700',
+  pending: 'bg-yellow-100 text-yellow-700',
+  refunded: 'bg-red-100 text-red-700',
+  voided: 'bg-gray-100 text-gray-600',
+};
+const FULFILLMENT_COLORS = {
+  fulfilled: 'bg-green-100 text-green-700',
+  partial: 'bg-yellow-100 text-yellow-700',
+  unfulfilled: 'bg-orange-100 text-orange-700',
+};
 
 export default function InboxPage() {
   const [status, setStatus] = useState('open');
@@ -20,10 +32,12 @@ export default function InboxPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   const navigate = useNavigate();
   const limit = 20;
 
-  useEffect(() => {
+  function loadTickets() {
     setLoading(true);
     api.get('/tickets', { params: { status, page, limit } })
       .then(res => {
@@ -32,7 +46,25 @@ export default function InboxPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadTickets();
   }, [status, page]);
+
+  async function handleSyncShopify() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await shopifyApi.syncOrders(50);
+      setSyncResult(res.data);
+      loadTickets();
+    } catch {
+      setSyncResult({ status: 'error', detail: 'Failed to sync Shopify orders.' });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const totalPages = Math.ceil(total / limit);
 
@@ -40,10 +72,42 @@ export default function InboxPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Inbox</h1>
-        <button onClick={() => navigate('/tickets/new')} className="btn-primary flex items-center gap-2">
-          <Plus size={16} /> New Ticket
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncShopify}
+            disabled={syncing}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing...' : 'Sync Shopify'}
+          </button>
+          <button onClick={() => navigate('/tickets/new')} className="btn-primary flex items-center gap-2">
+            <Plus size={16} /> New Ticket
+          </button>
+        </div>
       </div>
+
+      {/* Sync result banner */}
+      {syncResult && (
+        <div className={clsx(
+          'mb-4 px-4 py-3 rounded-lg text-sm',
+          syncResult.status === 'error'
+            ? 'bg-red-50 text-red-700 border border-red-200'
+            : 'bg-green-50 text-green-700 border border-green-200'
+        )}>
+          {syncResult.status === 'error' ? (
+            syncResult.detail
+          ) : (
+            <>
+              Synced {syncResult.created} new order{syncResult.created !== 1 ? 's' : ''} from Shopify.
+              {syncResult.skipped > 0 && ` ${syncResult.skipped} already existed.`}
+            </>
+          )}
+          <button onClick={() => setSyncResult(null)} className="ml-2 underline hover:no-underline">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Status tabs */}
       <div className="flex gap-1 mb-4">
@@ -76,10 +140,38 @@ export default function InboxPage() {
             >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-gray-900 truncate">{t.subject}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{t.customer_email}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-xs text-gray-500">{t.customer_email}</p>
+                  {t.channel === 'shopify' && t.shopify_total_price && (
+                    <>
+                      <span className="text-xs text-gray-300">|</span>
+                      <span className="text-xs font-medium text-gray-700">
+                        ${t.shopify_total_price} {t.shopify_currency || 'USD'}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {t.channel === 'shopify' && t.shopify_line_items?.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">
+                    {t.shopify_line_items.map(li => `${li.title} x${li.quantity}`).join(', ')}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2 ml-4 shrink-0">
-                {t.tags?.map(tag => (
+                {t.channel && (
+                  <span className="badge bg-gray-50 text-gray-500 capitalize text-xs">{t.channel}</span>
+                )}
+                {t.shopify_financial_status && (
+                  <span className={clsx('badge text-xs', FINANCIAL_COLORS[t.shopify_financial_status] || 'bg-gray-100 text-gray-600')}>
+                    {t.shopify_financial_status}
+                  </span>
+                )}
+                {t.shopify_fulfillment_status && (
+                  <span className={clsx('badge text-xs', FULFILLMENT_COLORS[t.shopify_fulfillment_status] || 'bg-gray-100 text-gray-600')}>
+                    {t.shopify_fulfillment_status}
+                  </span>
+                )}
+                {!t.shopify_financial_status && t.tags?.map(tag => (
                   <span key={tag} className="badge bg-gray-100 text-gray-600">{tag}</span>
                 ))}
                 <span className={clsx('badge', PRIORITY_COLORS[t.priority] || PRIORITY_COLORS.normal)}>

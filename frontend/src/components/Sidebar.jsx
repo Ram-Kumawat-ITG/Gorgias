@@ -1,6 +1,19 @@
 // Left navigation sidebar — links to all sections + agent info
 import { NavLink } from 'react-router-dom';
-import { Inbox, Users, ShoppingBag, RotateCcw, BarChart3, Zap, Bot, Shield, LogOut } from 'lucide-react';
+// import { Inbox, Users, ShoppingBag, BarChart3, Zap, Bot, Shield, LogOut ,FileText } from 'lucide-react';
+// import { Inbox, Users, ShoppingBag, RotateCcw, BarChart3, Zap, Bot, Shield, LogOut } from 'lucide-react';
+import { 
+  Inbox, 
+  Users, 
+  ShoppingBag, 
+  BarChart3, 
+  Zap, 
+  Bot, 
+  Shield, 
+  LogOut, 
+  FileText, 
+  RotateCcw 
+} from 'lucide-react';
 import useAuth from '../hooks/useAuth';
 import clsx from 'clsx';
 
@@ -12,19 +25,20 @@ const NAV_ITEMS = [
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
-  { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
+  // { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
+  { to: '/requests', icon: FileText, label: 'Requests' }
 ];
-
+  
 export default function Sidebar() {
   const { agent, logout } = useAuth();
 
   return (
-    <aside className="w-56 bg-white border-r border-gray-200 flex flex-col">
+    <aside className="w-56 h-full bg-white border-r border-gray-200 flex flex-col shrink-0">
       <div className="px-4 py-5 border-b border-gray-100">
         <h2 className="text-lg font-semibold text-brand-700">Helpdesk</h2>
       </div>
 
-      <nav className="flex-1 px-2 py-4 space-y-1">
+      <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
         {NAV_ITEMS.map(item => (
           <NavLink
             key={item.to}

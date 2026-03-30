@@ -28,6 +28,8 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
+  const [customer, setCustomer] = useState(null);
+  const [customerLoading, setCustomerLoading] = useState(false);
   const { toasts, addToast, addConfirmToast, removeToast } = useToast();
 
   // Modal states
@@ -86,6 +88,16 @@ export default function OrderDetailPage() {
   }
 
   useEffect(() => { loadOrder(); }, [id, isDraft]);
+
+  // Fetch full customer profile once order is loaded and customer_id is known
+  useEffect(() => {
+    if (!order?.customer_id) { setCustomer(null); return; }
+    setCustomerLoading(true);
+    api.get(`/customers/${order.customer_id}`)
+      .then(res => setCustomer(res.data))
+      .catch(() => setCustomer(null))
+      .finally(() => setCustomerLoading(false));
+  }, [order?.customer_id]);
 
   async function doAction(label, fn) {
     setActionLoading(label);
@@ -643,13 +655,123 @@ export default function OrderDetailPage() {
 
           {/* Customer info */}
           <div className="card p-4">
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Customer</h2>
-            <p className="text-sm font-medium text-gray-900">{order.customer_name || '—'}</p>
-            <p className="text-sm text-blue-600">{order.email}</p>
-            {order.customer_id && (
-              <button onClick={() => navigate(`/customers/${order.customer_id}`)}
-                className="text-xs text-brand-600 hover:underline mt-1">View customer</button>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Customer</h2>
+              {order.customer_id && (
+                <button onClick={() => navigate(`/customers/${order.customer_id}`)}
+                  className="text-xs text-brand-600 hover:underline">
+                  View profile →
+                </button>
+              )}
+            </div>
+
+            {/* Name + email — always from order */}
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-semibold shrink-0">
+                {(order.customer_name || order.email || '?')[0].toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{order.customer_name || '—'}</p>
+                <p className="text-xs text-blue-600 truncate">{order.email}</p>
+              </div>
+            </div>
+
+            {customerLoading && (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-1">
+                <div className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
+                Loading customer data…
+              </div>
             )}
+
+            {customer && !customerLoading && (() => {
+              const c = customer.customer;
+              const orders = customer.orders || [];
+              const stats = customer.ticket_stats || {};
+              return (
+                <div className="space-y-2 border-t border-gray-100 pt-3">
+                  {/* Key stats */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-gray-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-sm font-bold text-gray-900">{c?.orders_count ?? '—'}</p>
+                      <p className="text-xs text-gray-400">Orders</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-sm font-bold text-gray-900">${c?.total_spent ?? '—'}</p>
+                      <p className="text-xs text-gray-400">Spent</p>
+                    </div>
+                  </div>
+
+                  {/* Location */}
+                  {(c?.city || c?.country_code) && (
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <svg className="w-3 h-3 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      {[c.city, c.country_code].filter(Boolean).join(', ')}
+                    </div>
+                  )}
+
+                  {/* Company */}
+                  {c?.company && (
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <svg className="w-3 h-3 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                      </svg>
+                      {c.company}
+                    </div>
+                  )}
+
+                  {/* Ticket stats */}
+                  {(stats.total > 0) && (
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <svg className="w-3 h-3 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                      </svg>
+                      {stats.total} support ticket{stats.total !== 1 ? 's' : ''}
+                      {stats.open > 0 && <span className="text-orange-500">({stats.open} open)</span>}
+                    </div>
+                  )}
+
+                  {/* Tags */}
+                  {c?.tags && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {c.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                        <span key={t} className="badge bg-gray-100 text-gray-500 text-xs">{t}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Recent orders from this customer */}
+                  {orders.length > 1 && (
+                    <div className="border-t border-gray-100 pt-2 mt-1">
+                      <p className="text-xs font-medium text-gray-500 mb-1.5">Recent orders</p>
+                      <div className="space-y-1">
+                        {orders.slice(0, 3).map(o => (
+                          <div
+                            key={o.id}
+                            onClick={() => navigate(`/orders/${o.id}`)}
+                            className={clsx(
+                              'flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors',
+                              o.id === id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-gray-600'
+                            )}
+                          >
+                            <span className="font-medium">#{o.order_number}</span>
+                            <span className={clsx(
+                              'badge text-xs',
+                              o.financial_status === 'paid' ? 'bg-green-100 text-green-700' :
+                              o.financial_status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-100 text-gray-500'
+                            )}>{o.financial_status}</span>
+                            <span>${o.total_price}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Shipping address */}

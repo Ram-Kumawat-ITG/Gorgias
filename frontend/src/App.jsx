@@ -16,6 +16,7 @@ import OrderDetailPage from './pages/OrderDetailPage';
 import ReturnsPage from './pages/ReturnsPage';
 import ReturnDetailPage from './pages/ReturnDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import RequestPage from './pages/RequestPage';
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
@@ -46,8 +47,9 @@ export default function App() {
         <Route path="/returns/:id" element={<ReturnDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
-        <Route path="/sla-policies" element={<SLAPoliciesPage />} />
+        {/* <Route path="/sla-policies" element={<SLAPoliciesPage />} /> */}
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/requests" element={<RequestPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

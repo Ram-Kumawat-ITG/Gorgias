@@ -9,7 +9,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://localhost:3000",
+        "http://localhost:8000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -35,6 +35,23 @@ async def health():
 
 
 # Register all routers
+from app.routers import (
+    auth,
+    tickets,
+    customers,
+    orders,
+    webhooks,
+    email_inbound,
+    ai,
+    macros,
+    automations,
+    sla,
+    history,
+    analytics,
+    shopify,
+    channels,
+    instagram,
+)
 from app.routers import auth, tickets, customers, orders, returns, webhooks, email_inbound, ai, macros, automations, sla, history, analytics
 
 app.include_router(auth.router)
@@ -50,3 +67,6 @@ app.include_router(automations.router)
 app.include_router(sla.router)
 app.include_router(history.router)
 app.include_router(analytics.router)
+app.include_router(shopify.router)
+app.include_router(channels.router)
+app.include_router(instagram.router)

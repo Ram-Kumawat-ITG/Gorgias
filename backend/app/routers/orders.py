@@ -62,6 +62,11 @@ class FulfillPayload(BaseModel):
     notify: bool = True
 
 
+class OrderUpdatePayload(BaseModel):
+    note: Optional[str] = None
+    tags: Optional[str] = None
+
+
 class SendInvoicePayload(BaseModel):
     to: Optional[str] = None
     subject: Optional[str] = None

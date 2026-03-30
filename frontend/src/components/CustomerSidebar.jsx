@@ -17,13 +17,24 @@ export default function CustomerSidebar({ ticket }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!ticket?.customer_email) return;
-    api.get(`/customers/${encodeURIComponent(ticket.customer_email)}/profile`)
-      .then(res => {
-        setCustomer(res.data.customer);
-        setOrders(res.data.orders || []);
+    if (!ticket?.customer_email) { setLoading(false); return; }
+    setLoading(true);
+
+    // Step 1: search by email to get Shopify customer ID
+    api.get('/customers', { params: { search: ticket.customer_email, limit: 1 } })
+      .then(async res => {
+        const customers = res.data?.customers || [];
+        if (!customers.length || !customers[0].id) {
+          setCustomer(null);
+          setOrders([]);
+          return;
+        }
+        // Step 2: fetch full profile (includes orders + ticket stats)
+        const profile = await api.get(`/customers/${customers[0].id}`);
+        setCustomer(profile.data.customer);
+        setOrders(profile.data.orders || []);
       })
-      .catch(() => {})
+      .catch(() => { setCustomer(null); setOrders([]); })
       .finally(() => setLoading(false));
   }, [ticket?.customer_email]);
 

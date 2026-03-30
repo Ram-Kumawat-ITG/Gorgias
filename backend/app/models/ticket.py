@@ -23,6 +23,10 @@ class TicketPriority(str, Enum):
 class TicketChannel(str, Enum):
     EMAIL = "email"
     MANUAL = "manual"
+    SHOPIFY = "shopify"
+    WHATSAPP = "whatsapp"
+    CHAT = "chat"
+    INSTAGRAM = "instagram"
 
 
 class TicketCreate(BaseModel):

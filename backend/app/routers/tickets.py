@@ -17,6 +17,8 @@ async def list_tickets(
     status: str = None,
     assignee_id: str = None,
     tag: str = None,
+    channel: str = None,
+    search: str = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     agent=Depends(get_current_agent),
@@ -24,18 +26,33 @@ async def list_tickets(
     db = get_db()
     query = {}
     if status:
-        query["status"] = status
+        if status == 'active':
+            # Default inbox view — open + pending (excludes resolved/closed)
+            query["status"] = {"$in": ["open", "pending"]}
+        elif ',' in status:
+            query["status"] = {"$in": status.split(',')}
+        else:
+            query["status"] = status
     if assignee_id:
         query["assignee_id"] = assignee_id
     if tag:
         query["tags"] = tag
+    if channel:
+        query["channel"] = channel
+    if search:
+        query["$or"] = [
+            {"subject": {"$regex": search, "$options": "i"}},
+            {"customer_email": {"$regex": search, "$options": "i"}},
+            {"customer_name": {"$regex": search, "$options": "i"}},
+        ]
 
     total = await db.tickets.count_documents(query)
     skip = (page - 1) * limit
     tickets = await db.tickets.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     for t in tickets:
         t["_id"] = str(t["_id"])
-    return {"tickets": tickets, "total": total, "page": page, "limit": limit}
+    pages = max(1, (total + limit - 1) // limit)
+    return {"tickets": tickets, "total": total, "page": page, "limit": limit, "pages": pages}
 
 
 @router.post("")
@@ -92,6 +109,18 @@ async def get_ticket(ticket_id: str, agent=Depends(get_current_agent)):
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     ticket["_id"] = str(ticket["_id"])
+
+    # If shopify_order_id is missing, try to find it from order_snapshots
+    # (most recent order for this customer's email)
+    if not ticket.get("shopify_order_id") and ticket.get("customer_email"):
+        snapshot = await db.order_snapshots.find_one(
+            {"email": ticket["customer_email"]},
+            sort=[("created_at", -1)],
+        )
+        if snapshot:
+            ticket["shopify_order_id"] = snapshot.get("shopify_order_id")
+            ticket["shopify_order_number"] = snapshot.get("order_number")
+
     return ticket
 
 

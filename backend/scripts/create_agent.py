@@ -5,7 +5,7 @@ import bcrypt
 from app.database import connect_db, get_db
 from app.models.agent import AgentInDB
 
-EMAIL = "admin@yourstore.com"
+EMAIL = "admin@gmail.com"
 PASSWORD = "1234"
 FULL_NAME = "Admin"
 
