@@ -25,10 +25,9 @@ const NAV_ITEMS = [
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
-  // { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
   { to: '/requests', icon: FileText, label: 'Requests' }
 ];
-  
+
 export default function Sidebar() {
   const { agent, logout } = useAuth();
 
@@ -67,6 +66,6 @@ export default function Sidebar() {
           <LogOut size={14} /> Log out
         </button>
       </div>
-    </aside>
+    </aside>  
   );
 }

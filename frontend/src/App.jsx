@@ -8,7 +8,6 @@ import TicketDetailPage from './pages/TicketDetailPage';
 import NewTicketPage from './pages/NewTicketPage';
 import MacrosPage from './pages/MacrosPage';
 import AutomationsPage from './pages/AutomationsPage';
-import SLAPoliciesPage from './pages/SLAPoliciesPage';
 import CustomersPage from './pages/CustomersPage';
 import CustomerDetailPage from './pages/CustomerDetailPage';
 import OrdersPage from './pages/OrdersPage';
@@ -47,8 +46,7 @@ export default function App() {
         <Route path="/returns/:id" element={<ReturnDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
-        {/* <Route path="/sla-policies" element={<SLAPoliciesPage />} /> */}
-        <Route path="/analytics" element={<AnalyticsPage />} />
+<Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/requests" element={<RequestPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
