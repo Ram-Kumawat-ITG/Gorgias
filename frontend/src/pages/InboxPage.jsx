@@ -1,13 +1,41 @@
 // Inbox page — ticket list with status tabs, pagination, and priority badges
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Mail, MessageSquare, FileText, RefreshCw } from 'lucide-react';
 import api from '../api/client';
 import { shopifyApi } from '../api/client';
 import SLABadge from '../components/SLABadge';
 import clsx from 'clsx';
 
 const STATUSES = ['open', 'pending', 'resolved', 'closed'];
+const TICKET_TYPES = [
+  { value: '', label: 'All Types' },
+  { value: 'refund', label: 'Refund' },
+  { value: 'return', label: 'Return' },
+  { value: 'shipping', label: 'Shipping' },
+  { value: 'order_status', label: 'Order Status' },
+  { value: 'billing', label: 'Billing' },
+  { value: 'product_inquiry', label: 'Product Inquiry' },
+  { value: 'technical', label: 'Technical' },
+  { value: 'general', label: 'General' },
+];
+const CHANNELS = [
+  { value: '', label: 'All Channels' },
+  { value: 'email', label: 'Email', icon: Mail },
+  { value: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
+  { value: 'manual', label: 'Manual', icon: FileText },
+];
+const TYPE_COLORS = {
+  refund: 'bg-red-100 text-red-700',
+  return: 'bg-orange-100 text-orange-700',
+  shipping: 'bg-cyan-100 text-cyan-700',
+  order_status: 'bg-purple-100 text-purple-700',
+  billing: 'bg-yellow-100 text-yellow-700',
+  product_inquiry: 'bg-indigo-100 text-indigo-700',
+  technical: 'bg-pink-100 text-pink-700',
+  general: 'bg-gray-100 text-gray-600',
+};
+const CHANNEL_ICONS = { email: Mail, whatsapp: MessageSquare, manual: FileText };
 const PRIORITY_COLORS = {
   low: 'bg-gray-100 text-gray-700',
   normal: 'bg-blue-100 text-blue-700',
@@ -28,6 +56,8 @@ const FULFILLMENT_COLORS = {
 
 export default function InboxPage() {
   const [status, setStatus] = useState('open');
+  const [channel, setChannel] = useState('');
+  const [ticketType, setTicketType] = useState('');
   const [tickets, setTickets] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -39,7 +69,10 @@ export default function InboxPage() {
 
   function loadTickets() {
     setLoading(true);
-    api.get('/tickets', { params: { status, page, limit } })
+    const params = { status, page, limit };
+    if (channel) params.channel = channel;
+    if (ticketType) params.ticket_type = ticketType;
+    api.get('/tickets', { params })
       .then(res => {
         setTickets(res.data.tickets);
         setTotal(res.data.total);
@@ -123,6 +156,27 @@ export default function InboxPage() {
             {s}
           </button>
         ))}
+        {/* Channel + Type filters */}
+        <div className="ml-auto flex gap-2">
+          <select
+            value={ticketType}
+            onChange={e => { setTicketType(e.target.value); setPage(1); }}
+            className="px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            {TICKET_TYPES.map(tt => (
+              <option key={tt.value} value={tt.value}>{tt.label}</option>
+            ))}
+          </select>
+          <select
+            value={channel}
+            onChange={e => { setChannel(e.target.value); setPage(1); }}
+            className="px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            {CHANNELS.map(ch => (
+              <option key={ch.value} value={ch.value}>{ch.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Ticket list */}
@@ -138,40 +192,23 @@ export default function InboxPage() {
               onClick={() => navigate(`/tickets/${t.id}`)}
               className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
             >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-gray-900 truncate">{t.subject}</p>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <p className="text-xs text-gray-500">{t.customer_email}</p>
-                  {t.channel === 'shopify' && t.shopify_total_price && (
-                    <>
-                      <span className="text-xs text-gray-300">|</span>
-                      <span className="text-xs font-medium text-gray-700">
-                        ${t.shopify_total_price} {t.shopify_currency || 'USD'}
-                      </span>
-                    </>
-                  )}
+              <div className="min-w-0 flex-1 flex items-center gap-2">
+                {(() => {
+                  const Icon = CHANNEL_ICONS[t.channel];
+                  return Icon ? <Icon size={14} className={t.channel === 'whatsapp' ? 'text-green-500 shrink-0' : 'text-gray-400 shrink-0'} /> : null;
+                })()}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{t.subject}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{t.customer_email}</p>
                 </div>
-                {t.channel === 'shopify' && t.shopify_line_items?.length > 0 && (
-                  <p className="text-xs text-gray-400 mt-0.5 truncate">
-                    {t.shopify_line_items.map(li => `${li.title} x${li.quantity}`).join(', ')}
-                  </p>
-                )}
               </div>
               <div className="flex items-center gap-2 ml-4 shrink-0">
-                {t.channel && (
-                  <span className="badge bg-gray-50 text-gray-500 capitalize text-xs">{t.channel}</span>
-                )}
-                {t.shopify_financial_status && (
-                  <span className={clsx('badge text-xs', FINANCIAL_COLORS[t.shopify_financial_status] || 'bg-gray-100 text-gray-600')}>
-                    {t.shopify_financial_status}
+                {t.ticket_type && t.ticket_type !== 'general' && (
+                  <span className={clsx('badge', TYPE_COLORS[t.ticket_type] || TYPE_COLORS.general)}>
+                    {t.ticket_type.replace('_', ' ')}
                   </span>
                 )}
-                {t.shopify_fulfillment_status && (
-                  <span className={clsx('badge text-xs', FULFILLMENT_COLORS[t.shopify_fulfillment_status] || 'bg-gray-100 text-gray-600')}>
-                    {t.shopify_fulfillment_status}
-                  </span>
-                )}
-                {!t.shopify_financial_status && t.tags?.map(tag => (
+                {t.tags?.map(tag => (
                   <span key={tag} className="badge bg-gray-100 text-gray-600">{tag}</span>
                 ))}
                 <span className={clsx('badge', PRIORITY_COLORS[t.priority] || PRIORITY_COLORS.normal)}>

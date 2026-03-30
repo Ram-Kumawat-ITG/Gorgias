@@ -53,6 +53,10 @@ from app.routers import (
     instagram,
 )
 from app.routers import auth, tickets, customers, orders, returns, webhooks, email_inbound, ai, macros, automations, sla, history, analytics
+# from app.routers import auth, tickets, customers, webhooks, email_inbound, ai, macros, automations, sla, history, analytics, merchants
+# from app.routers import auth, tickets, customers, orders, webhooks, email_inbound, ai, macros, automations, sla, history, analytics
+
+from app.routers import auth, tickets, customers, orders, returns, webhooks, email_inbound, ai, macros, automations, sla, history, analytics, merchants, whatsapp, instagram
 
 app.include_router(auth.router)
 app.include_router(tickets.router)
@@ -70,3 +74,10 @@ app.include_router(analytics.router)
 app.include_router(shopify.router)
 app.include_router(channels.router)
 app.include_router(instagram.router)
+app.include_router(merchants.router)
+app.include_router(whatsapp.router)
+app.include_router(instagram.router)
+# Twitter split: webhooks + settings
+from app.routers.twitter import twitter_router, webhook_router
+app.include_router(webhook_router)
+app.include_router(twitter_router)

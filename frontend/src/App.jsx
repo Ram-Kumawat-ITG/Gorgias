@@ -16,6 +16,9 @@ import ReturnsPage from './pages/ReturnsPage';
 import ReturnDetailPage from './pages/ReturnDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import RequestPage from './pages/RequestPage';
+import WhatsAppSettingsPage from './pages/WhatsAppSettingsPage';
+import InstagramSettingsPage from './pages/InstagramSettingsPage';
+import TwitterSettingsPage from './pages/TwitterSettingsPage';
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
@@ -48,6 +51,10 @@ export default function App() {
         <Route path="/automations" element={<AutomationsPage />} />
 <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/requests" element={<RequestPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
+        <Route path="/instagram-settings" element={<InstagramSettingsPage />} />
+        <Route path="/twitter-settings" element={<TwitterSettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

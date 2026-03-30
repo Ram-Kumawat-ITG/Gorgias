@@ -5,6 +5,7 @@ import api from '../api/client';
 import CustomerSidebar from '../components/CustomerSidebar';
 import AISuggestion from '../components/AISuggestion';
 import MacroPicker from '../components/MacroPicker';
+import { Mail, MessageSquare, FileText, Check, CheckCheck, Clock, AlertCircle, Camera } from 'lucide-react';
 import clsx from 'clsx';
 
 const MSG_COLORS = {
@@ -12,6 +13,27 @@ const MSG_COLORS = {
   agent: 'bg-blue-50',
   system: 'bg-yellow-50',
   ai: 'bg-green-50',
+};
+
+const TICKET_TYPES = [
+  { value: 'refund', label: 'Refund' },
+  { value: 'return', label: 'Return' },
+  { value: 'shipping', label: 'Shipping' },
+  { value: 'order_status', label: 'Order Status' },
+  { value: 'billing', label: 'Billing' },
+  { value: 'product_inquiry', label: 'Product Inquiry' },
+  { value: 'technical', label: 'Technical' },
+  { value: 'general', label: 'General' },
+];
+const TYPE_COLORS = {
+  refund: 'bg-red-100 text-red-700',
+  return: 'bg-orange-100 text-orange-700',
+  shipping: 'bg-cyan-100 text-cyan-700',
+  order_status: 'bg-purple-100 text-purple-700',
+  billing: 'bg-yellow-100 text-yellow-700',
+  product_inquiry: 'bg-indigo-100 text-indigo-700',
+  technical: 'bg-pink-100 text-pink-700',
+  general: 'bg-gray-100 text-gray-600',
 };
 
 export default function TicketDetailPage() {
@@ -74,8 +96,91 @@ export default function TicketDetailPage() {
           <div className="flex items-center gap-2 mt-1">
             <span className="badge bg-gray-100 text-gray-600 capitalize">{ticket.status}</span>
             <span className="badge bg-blue-100 text-blue-700 capitalize">{ticket.priority}</span>
-            <span className="text-xs text-gray-400">{ticket.channel}</span>
+            <select
+              value={ticket.ticket_type || 'general'}
+              onChange={async (e) => {
+                try {
+                  await api.patch(`/tickets/${id}`, { ticket_type: e.target.value });
+                  await loadTicket();
+                } catch {}
+              }}
+              className={clsx(
+                'badge border-0 cursor-pointer text-xs font-medium rounded-full px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-brand-500',
+                TYPE_COLORS[ticket.ticket_type] || TYPE_COLORS.general
+              )}
+            >
+              {TICKET_TYPES.map(tt => (
+                <option key={tt.value} value={tt.value}>{tt.label}</option>
+              ))}
+            </select>
+            {ticket.channel === 'whatsapp' ? (
+              <span className="badge bg-green-100 text-green-700 flex items-center gap-1">
+                <MessageSquare size={12} /> WhatsApp
+              </span>
+            ) : ticket.channel === 'instagram' ? (
+              <span className="badge bg-pink-100 text-pink-700 flex items-center gap-1">
+                <Camera size={12} /> Instagram
+              </span>
+            ) : ticket.channel === 'twitter' ? (
+              <span className="badge bg-sky-100 text-sky-700 flex items-center gap-1">
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+                {ticket.twitter_type === 'mention' ? 'Twitter @mention' : 'Twitter DM'}
+              </span>
+            ) : ticket.channel === 'email' ? (
+              <span className="badge bg-gray-100 text-gray-600 flex items-center gap-1">
+                <Mail size={12} /> Email
+              </span>
+            ) : (
+              <span className="badge bg-gray-100 text-gray-600 flex items-center gap-1">
+                <FileText size={12} /> {ticket.channel}
+              </span>
+            )}
+            {ticket.channel === 'whatsapp' && ticket.whatsapp_phone && (
+              <span className="text-xs text-gray-400">+{ticket.whatsapp_phone}</span>
+            )}
+            {ticket.channel === 'instagram' && ticket.instagram_user_id && (
+              <span className="text-xs text-gray-400">ID: {ticket.instagram_user_id}</span>
+            )}
+            {ticket.channel === 'twitter' && ticket.twitter_username && (
+              <span className="text-xs text-gray-400">@{ticket.twitter_username}</span>
+            )}
           </div>
+          {ticket.channel === 'whatsapp' && ticket.whatsapp_last_customer_msg_at && (
+            <div className="mt-1">
+              {(() => {
+                const lastMsg = new Date(ticket.whatsapp_last_customer_msg_at);
+                const hoursLeft = Math.max(0, 24 - (Date.now() - lastMsg.getTime()) / 3600000);
+                if (hoursLeft <= 0) return (
+                  <span className="text-xs text-orange-600 flex items-center gap-1">
+                    <AlertCircle size={12} /> 24h window expired — replies will use template messages
+                  </span>
+                );
+                return (
+                  <span className="text-xs text-green-600 flex items-center gap-1">
+                    <Clock size={12} /> {hoursLeft.toFixed(1)}h left in messaging window
+                  </span>
+                );
+              })()}
+            </div>
+          )}
+          {ticket.channel === 'instagram' && ticket.instagram_last_customer_msg_at && (
+            <div className="mt-1">
+              {(() => {
+                const lastMsg = new Date(ticket.instagram_last_customer_msg_at);
+                const hoursLeft = Math.max(0, 24 - (Date.now() - lastMsg.getTime()) / 3600000);
+                if (hoursLeft <= 0) return (
+                  <span className="text-xs text-orange-600 flex items-center gap-1">
+                    <AlertCircle size={12} /> 24h window expired — customer must message first
+                  </span>
+                );
+                return (
+                  <span className="text-xs text-green-600 flex items-center gap-1">
+                    <Clock size={12} /> {hoursLeft.toFixed(1)}h left in messaging window
+                  </span>
+                );
+              })()}
+            </div>
+          )}
         </div>
 
         {/* Message thread */}
@@ -98,6 +203,44 @@ export default function TicketDetailPage() {
                 </span>
               </div>
               <p className="text-gray-800 whitespace-pre-wrap">{m.body}</p>
+              {m.whatsapp_media_url && (
+                <a href={m.whatsapp_media_url} target="_blank" rel="noopener noreferrer"
+                   className="text-xs text-brand-600 hover:underline mt-1 inline-block">
+                  View {m.whatsapp_media_type || 'media'}
+                </a>
+              )}
+              {m.whatsapp_status && m.sender_type === 'agent' && (
+                <span className="flex items-center gap-1 text-xs text-gray-400 mt-1">
+                  {m.whatsapp_status === 'sent' && <><Check size={12} /> Sent</>}
+                  {m.whatsapp_status === 'delivered' && <><CheckCheck size={12} /> Delivered</>}
+                  {m.whatsapp_status === 'read' && <><CheckCheck size={12} className="text-blue-500" /> Read</>}
+                  {m.whatsapp_status === 'failed' && <><AlertCircle size={12} className="text-red-500" /> Failed</>}
+                </span>
+              )}
+              {m.twitter_media_url && (
+                <a href={m.twitter_media_url} target="_blank" rel="noopener noreferrer"
+                   className="text-xs text-brand-600 hover:underline mt-1 inline-block">
+                  View {m.twitter_media_type || 'media'}
+                </a>
+              )}
+              {m.twitter_status && m.sender_type === 'agent' && (
+                <span className="flex items-center gap-1 text-xs text-gray-400 mt-1">
+                  {m.twitter_status === 'sent' && <><Check size={12} /> Sent</>}
+                  {m.twitter_status === 'failed' && <><AlertCircle size={12} className="text-red-500" /> Failed</>}
+                </span>
+              )}
+              {m.instagram_media_url && (
+                <a href={m.instagram_media_url} target="_blank" rel="noopener noreferrer"
+                   className="text-xs text-brand-600 hover:underline mt-1 inline-block">
+                  View {m.instagram_media_type || 'media'}
+                </a>
+              )}
+              {m.instagram_status && m.sender_type === 'agent' && (
+                <span className="flex items-center gap-1 text-xs text-gray-400 mt-1">
+                  {m.instagram_status === 'sent' && <><Check size={12} /> Sent</>}
+                  {m.instagram_status === 'read' && <><CheckCheck size={12} className="text-pink-500" /> Seen</>}
+                </span>
+              )}
             </div>
           ))}
         </div>

@@ -7,6 +7,7 @@ import uuid
 
 class CustomerCreate(BaseModel):
     email: str
+    phone: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     company: Optional[str] = None
@@ -21,6 +22,7 @@ class CustomerCreate(BaseModel):
 class CustomerInDB(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: str
+    phone: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     company: Optional[str] = None

@@ -5,6 +5,7 @@ import time
 from fastapi import APIRouter, Request, HTTPException
 from app.config import settings
 from app.services.ticket_service import create_ticket_from_email
+from app.database import get_db
 
 router = APIRouter(prefix="/webhooks/email", tags=["Email"])
 
@@ -33,6 +34,7 @@ async def inbound_email(request: Request):
     sender = form.get("sender", "")
     subject = form.get("subject", "No Subject")
     body = form.get("stripped-text") or form.get("body-plain", "")
+    recipient = form.get("recipient", "")
 
     # Signature verification — enforced only when signing key is configured
     token = form.get("token", "")
@@ -44,9 +46,18 @@ async def inbound_email(request: Request):
     if not body or not body.strip():
         return {"status": "skipped", "reason": "empty body"}
 
+    # Identify merchant by recipient email
+    merchant_id = None
+    db = get_db()
+    if recipient:
+        merchant = await db.merchants.find_one({"support_email": recipient, "is_active": True})
+        if merchant:
+            merchant_id = merchant["id"]
+
     ticket = await create_ticket_from_email(
         customer_email=sender,
         subject=subject,
         body=body.strip(),
+        merchant_id=merchant_id,
     )
     return {"status": "received", "ticket_id": ticket.get("id")}

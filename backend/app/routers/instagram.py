@@ -1,146 +1,176 @@
-# Instagram webhook handler — receive DMs via Meta Graph API webhooks
-# Setup:
-#   1. Add META_APP_SECRET, META_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN to .env
-#   2. In Meta Developer Console → Webhooks, subscribe to "messages" field
-#   3. Set webhook URL to: https://<your-domain>/webhooks/instagram
-import hashlib
-import hmac
-import json
-from datetime import datetime
+# Instagram webhook router — handles Meta webhook verification and inbound DMs
 from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+from datetime import datetime
 from app.config import settings
 from app.database import get_db
-from app.models.ticket import TicketInDB
-from app.models.message import MessageInDB
+from app.services.instagram_service import (
+    verify_webhook_signature,
+    get_instagram_config,
+    mark_as_seen,
+)
 from app.services.activity_service import log_activity
 
 router = APIRouter(prefix="/webhooks/instagram", tags=["Instagram"])
 
 
-def _verify_meta_signature(body: bytes, signature_header: str) -> bool:
-    """Verify X-Hub-Signature-256 sent by Meta on every webhook delivery."""
-    if not settings.meta_app_secret:
-        return True  # Skip in dev when secret not configured
-    if not signature_header or not signature_header.startswith("sha256="):
-        return False
-    expected = "sha256=" + hmac.new(
-        settings.meta_app_secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
-
-
-# ── Webhook verification challenge (GET) ─────────────────────────────────────
-
 @router.get("")
 async def verify_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
-    hub_challenge: str = Query(None, alias="hub.challenge"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
 ):
-    """
-    Meta calls this endpoint (GET) when you register the webhook in the Developer Console.
-    Respond with the challenge value to confirm ownership.
-    """
-    if hub_mode == "subscribe" and hub_verify_token == settings.meta_verify_token:
-        return int(hub_challenge)
-    raise HTTPException(status_code=403, detail="Webhook verification failed — check META_VERIFY_TOKEN")
+    """Meta webhook verification — responds with hub.challenge if token matches."""
+    if hub_mode == "subscribe":
+        verify_token = settings.instagram_verify_token
+        if not verify_token:
+            db = get_db()
+            merchant = await db.merchants.find_one(
+                {"instagram_verify_token": hub_verify_token, "is_active": True}
+            )
+            if merchant:
+                return PlainTextResponse(content=hub_challenge)
+            raise HTTPException(status_code=403, detail="Invalid verify token")
+
+        if hub_verify_token == verify_token:
+            return PlainTextResponse(content=hub_challenge)
+
+    raise HTTPException(status_code=403, detail="Verification failed")
 
 
-# ── Incoming DM / mention events (POST) ──────────────────────────────────────
+@router.post("/test")
+async def test_connection(request: Request):
+    """Test Instagram API connection by verifying credentials are valid."""
+    import httpx
+    body = await request.json()
+    merchant_id = body.get("merchant_id")
+    config = await get_instagram_config(merchant_id)
+
+    page_id = config.get("page_id", "")
+    access_token = config.get("access_token", "")
+
+    if not page_id or not access_token:
+        raise HTTPException(status_code=400, detail="Instagram credentials not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"https://graph.facebook.com/v21.0/{page_id}",
+                params={"fields": "id,name,instagram_business_account", "access_token": access_token},
+                timeout=10.0,
+            )
+            r.raise_for_status()
+            data = r.json()
+            return {
+                "status": "connected",
+                "page_name": data.get("name", ""),
+                "page_id": data.get("id", ""),
+            }
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=400, detail=f"Instagram API error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Connection failed: {str(e)}")
+
 
 @router.post("")
-async def receive_event(request: Request):
-    """
-    Handle incoming Instagram DM events.
-    Each event may contain multiple entries and messaging objects.
-    Idempotency: open tickets from the same sender are re-used (messages appended).
-    """
+async def receive_webhook(request: Request):
+    """Receive inbound Instagram DMs and read receipts from Meta."""
     body = await request.body()
-    sig = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_meta_signature(body, sig):
-        raise HTTPException(status_code=403, detail="Invalid Meta signature")
+    signature = request.headers.get("X-Hub-Signature-256", "")
 
-    payload = json.loads(body)
-    db = get_db()
+    # Verify signature — try global config first
+    app_secret = settings.instagram_app_secret
+    if app_secret and not verify_webhook_signature(body, signature, app_secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    for entry in payload.get("entry", []):
-        # Instagram DMs come under "messaging"
-        for event in entry.get("messaging", []):
-            sender_id = (event.get("sender") or {}).get("id", "")
-            recipient_id = (event.get("recipient") or {}).get("id", "")
-            message_data = event.get("message") or {}
-            message_text = message_data.get("text", "").strip()
-            message_mid = message_data.get("mid", "")
+    import json
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-            # Skip echo messages (sent by the page itself) and empty messages
-            if message_data.get("is_echo") or not message_text or not sender_id:
-                continue
-
-            # Idempotency: don't process the same message_id twice
-            if message_mid:
-                dup = await db.tickets.find_one({"channel_meta.message_ids": message_mid})
-                if dup:
-                    continue
-
-            # Check for an existing open/pending ticket from this sender
-            existing = await db.tickets.find_one({
-                "channel": "instagram",
-                "channel_meta.sender_id": sender_id,
-                "status": {"$in": ["open", "pending"]},
-            })
-
-            if existing:
-                ticket_id = existing["id"]
-                # Append message to existing thread
-                msg = MessageInDB(
-                    ticket_id=ticket_id,
-                    body=message_text,
-                    sender_type="customer",
-                )
-                await db.messages.insert_one(msg.model_dump())
-                await db.tickets.update_one(
-                    {"id": ticket_id},
-                    {
-                        "$set": {"updated_at": datetime.utcnow(), "status": "open"},
-                        "$push": {"channel_meta.message_ids": message_mid},
-                    },
-                )
-            else:
-                # Create a new ticket for this Instagram sender
-                ticket = TicketInDB(
-                    subject=f"Instagram DM from {sender_id}",
-                    customer_email=f"ig_{sender_id}@instagram.placeholder",
-                    customer_name=f"Instagram User {sender_id[:8]}",
-                    channel="instagram",
-                    priority="normal",
-                    tags=["instagram"],
-                )
-                ticket_doc = ticket.model_dump()
-                ticket_doc["channel_meta"] = {
-                    "platform": "instagram",
-                    "sender_id": sender_id,
-                    "page_id": recipient_id,
-                    "message_ids": [message_mid] if message_mid else [],
-                }
-                await db.tickets.insert_one(ticket_doc)
-
-                msg = MessageInDB(
-                    ticket_id=ticket.id,
-                    body=message_text,
-                    sender_type="customer",
-                )
-                await db.messages.insert_one(msg.model_dump())
-
-                await log_activity(
-                    entity_type="ticket",
-                    entity_id=ticket.id,
-                    event="ticket.created",
-                    actor_type="system",
-                    description=f"Instagram DM received from sender {sender_id[:8]}",
-                    customer_email=ticket_doc["customer_email"],
-                    metadata={"platform": "instagram", "sender_id": sender_id},
-                )
+    # Instagram sends data in entry[].messaging[]
+    entries = payload.get("entry", [])
+    for entry in entries:
+        page_id = entry.get("id", "")
+        for messaging in entry.get("messaging", []):
+            if "message" in messaging:
+                await _handle_message(messaging, page_id)
+            elif "read" in messaging:
+                await _handle_read(messaging)
 
     return {"status": "ok"}
+
+
+async def _handle_message(messaging: dict, page_id: str):
+    """Process incoming Instagram DM."""
+    db = get_db()
+
+    # Find merchant by instagram_page_id
+    merchant = await db.merchants.find_one(
+        {"instagram_page_id": page_id, "is_active": True}
+    )
+    merchant_id = merchant["id"] if merchant else None
+
+    sender_igsid = messaging.get("sender", {}).get("id", "")
+    msg_obj = messaging.get("message", {})
+    ig_message_id = msg_obj.get("mid", "")
+    timestamp = messaging.get("timestamp", "")
+
+    # Skip echo messages (messages sent by the page itself)
+    if msg_obj.get("is_echo"):
+        return
+
+    # Extract message content
+    body = ""
+    media_url = ""
+    media_type = ""
+
+    if "text" in msg_obj:
+        body = msg_obj["text"]
+    elif "attachments" in msg_obj:
+        attachments = msg_obj["attachments"]
+        if attachments:
+            att = attachments[0]
+            media_type = att.get("type", "")
+            media_url = att.get("payload", {}).get("url", "")
+            body = f"[{media_type} received]"
+
+    if not body and not media_url:
+        body = "[message received]"
+
+    # Mark as seen
+    try:
+        config = await get_instagram_config(merchant_id)
+        await mark_as_seen(sender_igsid, config)
+    except Exception:
+        pass
+
+    # Create or update ticket
+    from app.services.ticket_service import create_ticket_from_instagram
+    await create_ticket_from_instagram(
+        igsid=sender_igsid,
+        message_body=body,
+        ig_message_id=ig_message_id,
+        media_url=media_url,
+        media_type=media_type,
+        merchant_id=merchant_id,
+    )
+
+
+async def _handle_read(messaging: dict):
+    """Process Instagram read receipt — update message status."""
+    db = get_db()
+    sender_igsid = messaging.get("sender", {}).get("id", "")
+    watermark = messaging.get("read", {}).get("watermark", 0)
+
+    if sender_igsid:
+        # Mark all agent messages to this user as read (up to watermark timestamp)
+        await db.messages.update_many(
+            {
+                "instagram_sender_igsid": sender_igsid,
+                "sender_type": "agent",
+                "instagram_status": {"$in": ["sent", "delivered"]},
+            },
+            {"$set": {"instagram_status": "read"}},
+        )
