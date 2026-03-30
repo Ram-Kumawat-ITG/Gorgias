@@ -15,7 +15,8 @@ export default function CreateOrderModal({ customerId, customerName, customerEma
   const [items, setItems] = useState([]);
   const [note, setNote] = useState('');
   const [tags, setTags] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [isLoadingPaid, setIsLoadingPaid] = useState(false);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [error, setError] = useState('');
 
@@ -123,32 +124,37 @@ export default function CreateOrderModal({ customerId, customerName, customerEma
   }
 
   // ── Create confirmed order ──
-  async function handleCreateOrder() {
+  async function handleCreateOrder(financial_status) {
     if (items.length === 0) { setError('Add at least one item'); return; }
-    setCreating(true);
+    const setLoader = financial_status === 'paid' ? setIsLoadingPaid : setIsLoadingPending;
+    setLoader(true);
     setError('');
     try {
-      await api.post('/orders', buildPayload());
-      onSuccess('Order created on Shopify');
+      await api.post('/orders', { ...buildPayload(), financial_status });
+      onSuccess(`Order created as ${financial_status} on Shopify`);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create order');
-    } finally { setCreating(false); }
+    } finally { setLoader(false); }
   }
 
-  // ── Create draft order ──
+  // ── Create draft order + send Shopify invoice ──
   async function handleCreateDraft() {
     if (items.length === 0) { setError('Add at least one item'); return; }
     setCreatingDraft(true);
     setError('');
     try {
       const res = await api.post('/orders/drafts', buildPayload());
-      onSuccess(`Draft order ${res.data.name || ''} created on Shopify`);
+      const draftId = res.data.id;
+      if (draftId) {
+        try { await api.post(`/orders/drafts/${draftId}/send-invoice`); } catch {}
+      }
+      onSuccess(`Draft order ${res.data.name || ''} created & invoice sent`);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create draft order');
     } finally { setCreatingDraft(false); }
   }
 
-  const busy = creating || creatingDraft;
+  const busy = isLoadingPaid || isLoadingPending || creatingDraft;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -314,19 +320,32 @@ export default function CreateOrderModal({ customerId, customerName, customerEma
           </div>
         </div>
 
-        {/* Footer — two action buttons */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-          {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-          <div className="flex items-center justify-end gap-2">
-            <button onClick={onClose} className="btn-secondary" disabled={busy}>Cancel</button>
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl space-y-3">
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          {/* Top row — draft + invoice */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500">Create draft order &amp; send Shopify invoice</p>
             <button onClick={handleCreateDraft} disabled={busy || items.length === 0}
-              className="btn-secondary font-medium">
+              className="btn-primary text-sm">
               {creatingDraft ? 'Creating...' : 'Create Draft Order'}
             </button>
-            <button onClick={handleCreateOrder} disabled={busy || items.length === 0}
-              className="btn-primary">
-              {creating ? 'Creating...' : 'Create Order'}
-            </button>
+          </div>
+
+          {/* Bottom row — cancel + paid/pending */}
+          <div className="flex items-center justify-between">
+            <button onClick={onClose} className="btn-secondary text-sm" disabled={busy}>Cancel</button>
+            <div className="flex gap-2">
+              <button onClick={() => handleCreateOrder('paid')} disabled={busy || items.length === 0}
+                className="btn-primary text-sm">
+                {isLoadingPaid ? 'Creating...' : 'Create order as paid'}
+              </button>
+              <button onClick={() => handleCreateOrder('pending')} disabled={busy || items.length === 0}
+                className="btn-primary text-sm">
+                {isLoadingPending ? 'Creating...' : 'Create order as pending'}
+              </button>
+            </div>
           </div>
         </div>
       </div>

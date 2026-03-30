@@ -26,6 +26,7 @@ class OrderCreatePayload(BaseModel):
     line_items: List[LineItemPayload]
     note: Optional[str] = None
     tags: Optional[str] = None
+    financial_status: Optional[str] = "pending"  # "paid" | "pending"
 
 
 class OrderUpdatePayload(BaseModel):
@@ -298,12 +299,19 @@ def _build_draft_payload(data: OrderCreatePayload) -> dict:
 
 @router.post("")
 async def create_order(data: OrderCreatePayload, agent=Depends(get_current_agent)):
-    """Create draft then complete it into a confirmed order."""
+    """Create draft then complete it into a confirmed order.
+    financial_status='paid'    → payment_pending=false (order marked as paid immediately)
+    financial_status='pending' → payment_pending=true  (order awaits payment)
+    """
     payload = _build_draft_payload(data)
     try:
         draft_result = await shopify_post("/draft_orders.json", payload)
         draft = draft_result.get("draft_order", {})
-        complete = await shopify_put(f"/draft_orders/{draft['id']}/complete.json", {})
+        payment_pending = (data.financial_status or "pending") != "paid"
+        complete = await shopify_put(
+            f"/draft_orders/{draft['id']}/complete.json",
+            {"payment_pending": payment_pending},
+        )
         order_id = complete.get("draft_order", {}).get("order_id")
         if order_id:
             return _format_order((await shopify_get(f"/orders/{order_id}.json")).get("order", {}))
