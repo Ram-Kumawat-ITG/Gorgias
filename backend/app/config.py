@@ -18,6 +18,25 @@ class Settings(BaseSettings):
     meta_app_secret: str = ""
     meta_verify_token: str = "helpdesk_ig_verify"
     meta_page_access_token: str = ""
+    # WhatsApp Cloud API (Meta)
+    whatsapp_app_id: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_waba_id: str = ""
+    whatsapp_verify_token: str = ""
+    # Instagram Messenger API (Meta)
+    instagram_page_id: str = ""
+    instagram_access_token: str = ""
+    instagram_app_secret: str = ""
+    instagram_verify_token: str = ""
+    # Twitter / X API
+    twitter_api_key: str = ""
+    twitter_api_secret: str = ""
+    twitter_access_token: str = ""
+    twitter_access_token_secret: str = ""
+    twitter_bearer_token: str = ""
+    twitter_env_name: str = "production"
 
     class Config:
         env_file = ".env"

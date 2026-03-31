@@ -46,6 +46,7 @@ async def create_indexes():
     await d.tickets.create_index([("assignee_id", 1), ("status", 1)])
     await d.tickets.create_index([("sla_due_at", 1)])
     await d.tickets.create_index([("tags", 1)])
+    await d.tickets.create_index([("ticket_type", 1), ("status", 1), ("created_at", -1)])
     await d.messages.create_index([("ticket_id", 1), ("created_at", 1)])
     await d.customers.create_index([("email", 1)], unique=True)
     await d.customers.create_index([("shopify_customer_id", 1)])
@@ -57,4 +58,17 @@ async def create_indexes():
     await d.returns.create_index([("status", 1), ("created_at", -1)])
     await d.returns.create_index([("order_id", 1)])
     await d.returns.create_index([("customer_email", 1)])
+    # WhatsApp indexes
+    await d.tickets.create_index([("whatsapp_phone", 1), ("channel", 1), ("status", 1)])
+    await d.customers.create_index([("phone", 1)])
+    await d.messages.create_index([("whatsapp_message_id", 1)])
+    await d.merchants.create_index([("whatsapp_phone_number_id", 1)])
+    # Instagram indexes
+    await d.tickets.create_index([("instagram_user_id", 1), ("channel", 1), ("status", 1)])
+    await d.messages.create_index([("instagram_message_id", 1)])
+    await d.merchants.create_index([("instagram_page_id", 1)])
+    # Twitter indexes
+    await d.tickets.create_index([("twitter_sender_id", 1), ("channel", 1), ("twitter_type", 1), ("status", 1)])
+    await d.messages.create_index([("twitter_message_id", 1)])
+    await d.merchants.create_index([("twitter_user_id", 1)])
     print("Indexes created")

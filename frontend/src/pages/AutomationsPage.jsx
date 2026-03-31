@@ -4,9 +4,9 @@ import { Trash2, Plus } from 'lucide-react';
 import api from '../api/client';
 
 const TRIGGER_EVENTS = ['ticket.created', 'message.received', 'sla.breached'];
-const CONDITION_FIELDS = ['subject', 'status', 'priority', 'channel', 'message_body', 'tags'];
+const CONDITION_FIELDS = ['subject', 'status', 'priority', 'channel', 'ticket_type', 'message_body', 'tags'];
 const CONDITION_OPERATORS = ['equals', 'contains', 'not_contains', 'is_empty'];
-const ACTION_TYPES = ['add_tag', 'set_priority', 'assign_to', 'set_status', 'send_macro'];
+const ACTION_TYPES = ['add_tag', 'set_priority', 'assign_to', 'set_status', 'set_type', 'send_macro'];
 
 export default function AutomationsPage() {
   const [rules, setRules] = useState([]);

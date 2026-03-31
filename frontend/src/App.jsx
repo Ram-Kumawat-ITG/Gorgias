@@ -8,7 +8,6 @@ import TicketDetailPage from './pages/TicketDetailPage';
 import NewTicketPage from './pages/NewTicketPage';
 import MacrosPage from './pages/MacrosPage';
 import AutomationsPage from './pages/AutomationsPage';
-import SLAPoliciesPage from './pages/SLAPoliciesPage';
 import CustomersPage from './pages/CustomersPage';
 import CustomerDetailPage from './pages/CustomerDetailPage';
 import OrdersPage from './pages/OrdersPage';
@@ -17,6 +16,10 @@ import ReturnsPage from './pages/ReturnsPage';
 import ReturnDetailPage from './pages/ReturnDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import RequestPage from './pages/RequestPage';
+import WhatsAppSettingsPage from './pages/WhatsAppSettingsPage';
+import InstagramSettingsPage from './pages/InstagramSettingsPage';
+import TwitterSettingsPage from './pages/TwitterSettingsPage';
+import EmailSettingsPage from './pages/EmailSettingsPage';
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
@@ -47,10 +50,15 @@ export default function App() {
         <Route path="/returns/:id" element={<ReturnDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
-        {/* <Route path="/sla-policies" element={<SLAPoliciesPage />} /> */}
-        <Route path="/analytics" element={<AnalyticsPage />} />
+<Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/requests" element={<RequestPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
+        <Route path="/instagram-settings" element={<InstagramSettingsPage />} />
+        <Route path="/twitter-settings" element={<TwitterSettingsPage />} />
+        <Route path="/email-settings" element={<EmailSettingsPage />} />
       </Route>
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

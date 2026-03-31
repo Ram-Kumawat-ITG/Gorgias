@@ -65,6 +65,10 @@ async def _execute_actions(actions: list, ticket: dict, db):
             await db.tickets.update_one(
                 {"id": ticket_id}, {"$set": {"status": value}}
             )
+        elif action_type == "set_type":
+            await db.tickets.update_one(
+                {"id": ticket_id}, {"$set": {"ticket_type": value}}
+            )
         elif action_type == "send_macro":
             macro = await db.macros.find_one({"id": value})
             if macro:
