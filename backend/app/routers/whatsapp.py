@@ -47,10 +47,16 @@ async def test_connection(request: Request):
     import httpx
     body = await request.json()
     merchant_id = body.get("merchant_id")
-    config = await get_whatsapp_config(merchant_id)
 
-    phone_number_id = config.get("phone_number_id", "")
-    access_token = config.get("access_token", "")
+    # Use inline credentials if provided (e.g. validating before save),
+    # otherwise fall back to the stored config for this merchant.
+    phone_number_id = body.get("phone_number_id") or ""
+    access_token = body.get("access_token") or ""
+
+    if not phone_number_id or not access_token:
+        config = await get_whatsapp_config(merchant_id)
+        phone_number_id = phone_number_id or config.get("phone_number_id", "")
+        access_token = access_token or config.get("access_token", "")
 
     if not phone_number_id or not access_token:
         raise HTTPException(status_code=400, detail="WhatsApp credentials not configured")

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, Component } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { aiApi, ordersApi, customersApi, channelsApi, ticketsApi } from '../api/client'
 import clsx from 'clsx'
 
@@ -302,11 +303,13 @@ const ACTION_ICONS = {
 }
 
 export default function RequestPage() {
+  const [searchParams] = useSearchParams()
+
   // ── Channels ──────────────────────────────────────────────────────────────
   const [channels, setChannels] = useState([])
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [channelsError, setChannelsError] = useState('')
-  const [activeChannel, setActiveChannel] = useState('')
+  const [activeChannel, setActiveChannel] = useState(searchParams.get('channel') || '')
 
   // ── Ticket list ───────────────────────────────────────────────────────────
   const [tickets, setTickets] = useState([])

@@ -1,7 +1,8 @@
 // Twitter integration settings — configure Twitter / X API credentials
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-import { CheckCircle, AlertCircle, ExternalLink } from 'lucide-react';
+import { CheckCircle, AlertCircle } from 'lucide-react';
 
 export default function TwitterSettingsPage() {
   const [merchants, setMerchants] = useState([]);
@@ -17,7 +18,10 @@ export default function TwitterSettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success'|'error', message }
+  const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
+
+  const isValid = validateForm();
 
   useEffect(() => {
     api.get('/merchants').then(res => {
@@ -27,9 +31,9 @@ export default function TwitterSettingsPage() {
     }).catch(() => {});
   }, []);
 
-  function selectMerchant(merchant) {
+function selectMerchant(merchant) {
     setSelectedMerchant(merchant);
-    setForm({
+    const newForm = {
       twitter_api_key: merchant.twitter_api_key || '',
       twitter_api_secret: merchant.twitter_api_secret || '',
       twitter_access_token: merchant.twitter_access_token || '',
@@ -37,23 +41,45 @@ export default function TwitterSettingsPage() {
       twitter_bearer_token: merchant.twitter_bearer_token || '',
       twitter_env_name: merchant.twitter_env_name || 'production',
       twitter_user_id: merchant.twitter_user_id || '',
-    });
+    };
+    setForm(newForm);
     setStatus(null);
+  }
+
+function validateForm() {
+    const required = ['twitter_api_key', 'twitter_bearer_token', 'twitter_user_id'];
+    for (const field of required) {
+      if (!form[field]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async function handleSave(e) {
     e.preventDefault();
-    if (!selectedMerchant) return;
+
+    if (!selectedMerchant) {
+      setStatus({ type: 'error', message: 'Please select a merchant' });
+      return;
+    }
+
+    if (!isValid) return;
+
     setSaving(true);
     setStatus(null);
     try {
       await api.patch(`/merchants/${selectedMerchant.id}`, form);
-      setStatus({ type: 'success', message: 'Twitter configuration saved successfully!' });
+      setStatus({ type: 'success', message: '✅ Twitter configuration saved! Redirecting to Inbox...' });
+
       const res = await api.get('/merchants');
       const list = res.data.merchants || res.data || [];
       setMerchants(list);
-      const updated = list.find(m => m.id === selectedMerchant.id);
-      if (updated) setSelectedMerchant(updated);
+
+      setTimeout(() => {
+        navigate('/');
+      }, 1500);
+
     } catch (err) {
       setStatus({ type: 'error', message: err.response?.data?.detail || 'Failed to save configuration' });
     } finally {
@@ -65,7 +91,7 @@ export default function TwitterSettingsPage() {
     setTesting(true);
     setStatus(null);
     try {
-      const res = await api.post('/webhooks/twitter/test', {
+      const res = await api.post('/twitter/test', {
         merchant_id: selectedMerchant?.id,
       });
       setStatus({
@@ -227,7 +253,7 @@ export default function TwitterSettingsPage() {
         </div>
 
         <div className="flex items-center gap-3 pt-2">
-          <button type="submit" className="btn-primary" disabled={saving}>
+          <button type="submit" className="btn-primary" disabled={saving || !selectedMerchant}>
             {saving ? 'Saving...' : 'Save Configuration'}
           </button>
           <button

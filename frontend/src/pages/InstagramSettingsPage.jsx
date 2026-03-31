@@ -1,5 +1,6 @@
 // Instagram integration settings — configure Meta Instagram Messenger API credentials
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { Instagram, CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -14,7 +15,10 @@ export default function InstagramSettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success'|'error', message }
+  const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
+
+  const isValid = validateForm();
 
   useEffect(() => {
     api.get('/merchants').then(res => {
@@ -26,30 +30,46 @@ export default function InstagramSettingsPage() {
     }).catch(() => {});
   }, []);
 
-  function selectMerchant(merchant) {
+function selectMerchant(merchant) {
     setSelectedMerchant(merchant);
-    setForm({
+    const newForm = {
       instagram_page_id: merchant.instagram_page_id || '',
       instagram_access_token: merchant.instagram_access_token || '',
       instagram_app_secret: merchant.instagram_app_secret || '',
       instagram_verify_token: merchant.instagram_verify_token || '',
-    });
+    };
+    setForm(newForm);
     setStatus(null);
+  }
+
+function validateForm() {
+    const required = ['instagram_page_id', 'instagram_access_token'];
+    for (const field of required) {
+      if (!form[field]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async function handleSave(e) {
     e.preventDefault();
-    if (!selectedMerchant) return;
+    if (!selectedMerchant || !validateForm()) return;
+
     setSaving(true);
     setStatus(null);
     try {
       await api.patch(`/merchants/${selectedMerchant.id}`, form);
-      setStatus({ type: 'success', message: 'Instagram configuration saved successfully!' });
+      setStatus({ type: 'success', message: '✅ Instagram configuration saved! Redirecting to Inbox...' });
+
       const res = await api.get('/merchants');
       const list = res.data.merchants || res.data || [];
       setMerchants(list);
-      const updated = list.find(m => m.id === selectedMerchant.id);
-      if (updated) setSelectedMerchant(updated);
+
+      setTimeout(() => {
+        navigate('/');
+      }, 1500);
+
     } catch (err) {
       setStatus({ type: 'error', message: err.response?.data?.detail || 'Failed to save configuration' });
     } finally {
@@ -182,7 +202,7 @@ export default function InstagramSettingsPage() {
         </div>
 
         <div className="flex items-center gap-3 pt-2">
-          <button type="submit" className="btn-primary" disabled={saving}>
+          <button type="submit" className="btn-primary" disabled={saving || !selectedMerchant}>
             {saving ? 'Saving...' : 'Save Configuration'}
           </button>
           <button

@@ -19,6 +19,7 @@ import RequestPage from './pages/RequestPage';
 import WhatsAppSettingsPage from './pages/WhatsAppSettingsPage';
 import InstagramSettingsPage from './pages/InstagramSettingsPage';
 import TwitterSettingsPage from './pages/TwitterSettingsPage';
+import EmailSettingsPage from './pages/EmailSettingsPage';
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
@@ -55,7 +56,9 @@ export default function App() {
         <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
         <Route path="/instagram-settings" element={<InstagramSettingsPage />} />
         <Route path="/twitter-settings" element={<TwitterSettingsPage />} />
+        <Route path="/email-settings" element={<EmailSettingsPage />} />
       </Route>
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

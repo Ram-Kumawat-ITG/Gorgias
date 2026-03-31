@@ -1,5 +1,6 @@
 // WhatsApp integration settings — configure Meta WhatsApp Business API credentials
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { MessageSquare, CheckCircle, AlertCircle, ExternalLink } from 'lucide-react';
 
@@ -15,7 +16,10 @@ export default function WhatsAppSettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success'|'error', message }
+  const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
+
+  const isValid = validateForm();
 
   useEffect(() => {
     api.get('/merchants').then(res => {
@@ -27,34 +31,66 @@ export default function WhatsAppSettingsPage() {
     }).catch(() => {});
   }, []);
 
-  function selectMerchant(merchant) {
+function selectMerchant(merchant) {
     setSelectedMerchant(merchant);
-    setForm({
+    const newForm = {
       whatsapp_phone_number_id: merchant.whatsapp_phone_number_id || '',
       whatsapp_waba_id: merchant.whatsapp_waba_id || '',
       whatsapp_access_token: merchant.whatsapp_access_token || '',
       whatsapp_verify_token: merchant.whatsapp_verify_token || '',
       whatsapp_app_secret: merchant.whatsapp_app_secret || '',
-    });
+    };
+    setForm(newForm);
     setStatus(null);
+  }
+
+function validateForm() {
+    const required = ['whatsapp_phone_number_id', 'whatsapp_access_token', 'whatsapp_waba_id'];
+    for (const field of required) {
+      if (!form[field]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async function handleSave(e) {
     e.preventDefault();
-    if (!selectedMerchant) return;
+
+    if (!selectedMerchant) {
+      setStatus({ type: 'error', message: 'Please select a merchant' });
+      return;
+    }
+
+    if (!isValid) {
+      setStatus({ type: 'error', message: 'Phone Number ID, Access Token, and WABA ID are required.' });
+      return;
+    }
+
     setSaving(true);
     setStatus(null);
     try {
+      // Validate credentials against Meta API before saving (pass form values directly
+      // so unsaved credentials are tested, not the previously stored ones)
+      await api.post('/webhooks/whatsapp/test', {
+        merchant_id: selectedMerchant.id,
+        phone_number_id: form.whatsapp_phone_number_id,
+        access_token: form.whatsapp_access_token,
+      });
+
       await api.patch(`/merchants/${selectedMerchant.id}`, form);
-      setStatus({ type: 'success', message: 'WhatsApp configuration saved successfully!' });
-      // Refresh merchant list
+      setStatus({ type: 'success', message: '✅ WhatsApp configuration saved! Redirecting to Inbox...' });
+
       const res = await api.get('/merchants');
       const list = res.data.merchants || res.data || [];
       setMerchants(list);
-      const updated = list.find(m => m.id === selectedMerchant.id);
-      if (updated) setSelectedMerchant(updated);
+
+      setTimeout(() => {
+        navigate('/requests?channel=whatsapp');
+      }, 1500);
+
     } catch (err) {
-      setStatus({ type: 'error', message: err.response?.data?.detail || 'Failed to save configuration' });
+      setStatus({ type: 'error', message: err.response?.data?.detail || 'Failed to validate or save configuration. Please check your credentials.' });
     } finally {
       setSaving(false);
     }
@@ -197,7 +233,7 @@ export default function WhatsAppSettingsPage() {
         </div>
 
         <div className="flex items-center gap-3 pt-2">
-          <button type="submit" className="btn-primary" disabled={saving}>
+          <button type="submit" className="btn-primary" disabled={saving || !selectedMerchant || !isValid}>
             {saving ? 'Saving...' : 'Save Configuration'}
           </button>
           <button

@@ -148,7 +148,7 @@ async def _handle_message(messaging: dict, page_id: str):
 
     # Create or update ticket
     from app.services.ticket_service import create_ticket_from_instagram
-    await create_ticket_from_instagram(
+    ticket = await create_ticket_from_instagram(
         igsid=sender_igsid,
         message_body=body,
         ig_message_id=ig_message_id,
@@ -156,6 +156,20 @@ async def _handle_message(messaging: dict, page_id: str):
         media_type=media_type,
         merchant_id=merchant_id,
     )
+
+    # Run AI Sales Agent and auto-reply
+    try:
+        from app.services.instagram_sales_agent_service import process_instagram_message
+        from app.services.instagram_service import send_text_message
+        config = await get_instagram_config(merchant_id)
+        reply_text = await process_instagram_message(
+            igsid=sender_igsid,
+            ticket_id=ticket["id"],
+            message_body=body,
+        )
+        await send_text_message(sender_igsid, reply_text, config)
+    except Exception as agent_err:
+        print(f"Instagram AI agent error for {sender_igsid}: {agent_err}")
 
 
 async def _handle_read(messaging: dict):

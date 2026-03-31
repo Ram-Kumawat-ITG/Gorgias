@@ -10,7 +10,8 @@ import {
   Shield, 
   LogOut, 
   FileText, 
-  RotateCcw 
+  RotateCcw,
+  Mail 
 } from 'lucide-react';
 
 function WhatsAppIcon({ size = 18 }) {
@@ -51,7 +52,8 @@ const NAV_ITEMS = [
   { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
   { to: '/whatsapp-settings', icon: WhatsAppIcon, label: 'WhatsApp' },
   { to: '/instagram-settings', icon: InstagramIcon, label: 'Instagram' },
-  { to: '/twitter-settings', icon: XIcon, label: 'Twitter / X' },
+{ to: '/twitter-settings', icon: XIcon, label: 'Twitter / X' },
+{ to: '/email-settings', icon: Mail, label: 'Email' },
 ];
 
 export default function Sidebar() {
