@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle, Truck, Package, XCircle, RotateCcw, X as XIcon, Ban,
+  ArrowLeft, CheckCircle, Truck, Package, XCircle, RotateCcw, X as XIcon, Ban, BarChart2,
 } from 'lucide-react';
 import api from '../api/client';
 import clsx from 'clsx';
@@ -34,6 +34,8 @@ export default function ReturnDetailPage() {
   const [statusNote, setStatusNote] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [courier, setCourier] = useState('');
+  const [inventoryData, setInventoryData] = useState(null);   // null = not loaded
+  const [inventoryLoading, setInventoryLoading] = useState(false);
   const { toasts, addToast, addConfirmToast, removeToast } = useToast();
 
   async function loadReturn() {
@@ -86,6 +88,16 @@ export default function ReturnDetailPage() {
         addToast(err.response?.data?.detail || 'Failed', 'error');
       }
     });
+  }
+
+  async function loadInventory() {
+    setInventoryLoading(true);
+    try {
+      const res = await api.get(`/returns/${id}/inventory`);
+      setInventoryData(res.data.items);
+    } catch (err) {
+      addToast(err.response?.data?.detail || 'Failed to fetch inventory', 'error');
+    } finally { setInventoryLoading(false); }
   }
 
   function handleDelete() {
@@ -150,6 +162,53 @@ export default function ReturnDetailPage() {
             {ret.reason_notes && <p className="text-sm text-gray-500 mt-1">{ret.reason_notes}</p>}
           </div>
 
+          {/* Customer-submitted product images (from WhatsApp / chatbot) */}
+          {ret.images && ret.images.length > 0 && (
+            <div className="card p-5">
+              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                Product Images ({ret.images.length})
+              </h2>
+              <div className="grid grid-cols-3 gap-2">
+                {ret.images.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noreferrer"
+                    className="block rounded-lg overflow-hidden border border-gray-200 hover:border-brand-400 transition-colors aspect-square bg-gray-50">
+                    <img src={url} alt={`Return image ${i + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={e => { e.target.style.display = 'none'; e.target.parentElement.classList.add('flex', 'items-center', 'justify-center'); e.target.parentElement.innerHTML = '<span class="text-xs text-gray-400">No preview</span>'; }}
+                    />
+                  </a>
+                ))}
+              </div>
+
+              {/* Verify & decide — shown only when admin hasn't acted yet */}
+              {ret.status === 'requested' && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <p className="text-xs text-gray-500 mb-3">
+                    Review the images above, then approve or reject this return.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => updateStatus('approved')}
+                      disabled={!!actionLoading}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors disabled:opacity-50"
+                    >
+                      <CheckCircle size={14} />
+                      {actionLoading === 'approved' ? 'Approving...' : 'Approve Return'}
+                    </button>
+                    <button
+                      onClick={() => updateStatus('rejected')}
+                      disabled={!!actionLoading}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
+                    >
+                      <XIcon size={14} />
+                      {actionLoading === 'rejected' ? 'Rejecting...' : 'Reject Return'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Tracking info */}
           {ret.tracking_number && (
             <div className="card p-5">
@@ -200,6 +259,52 @@ export default function ReturnDetailPage() {
                 <div>
                   <p className="text-sm text-green-700">Replacement order created (zero charge).</p>
                   <button onClick={() => navigate(`/orders/${ret.replacement_order_id}`)} className="text-sm text-brand-600 hover:underline mt-1">View replacement order →</button>
+                </div>
+              )}
+            </div>
+          )}
+          {/* Inventory check — shown after item is received/resolved */}
+          {['received', 'resolved'].includes(ret.status) && (
+            <div className="card p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Shopify Inventory Status</h2>
+                <button onClick={loadInventory} disabled={inventoryLoading}
+                  className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700 font-medium disabled:opacity-50">
+                  <BarChart2 size={13} />
+                  {inventoryLoading ? 'Checking...' : inventoryData ? 'Refresh' : 'Check Inventory'}
+                </button>
+              </div>
+              {inventoryData === null ? (
+                <p className="text-xs text-gray-400">Click "Check Inventory" to verify restocking in Shopify.</p>
+              ) : (
+                <div className="space-y-2">
+                  {inventoryData.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-gray-50 last:border-0">
+                      <div>
+                        <p className="font-medium text-gray-900">{item.title}</p>
+                        {item.variant_title && <p className="text-xs text-gray-500">{item.variant_title}</p>}
+                        {item.sku && <p className="text-xs text-gray-400">SKU: {item.sku}</p>}
+                      </div>
+                      <div className="text-right shrink-0 ml-4">
+                        {item.error ? (
+                          <span className="text-xs text-red-500">{item.error}</span>
+                        ) : (
+                          <>
+                            <span className={clsx(
+                              'font-semibold text-base',
+                              item.inventory_quantity > 0 ? 'text-green-600' : 'text-red-500'
+                            )}>
+                              {item.inventory_quantity ?? '—'}
+                            </span>
+                            <p className="text-xs text-gray-400">in stock</p>
+                            {!item.inventory_policy && (
+                              <p className="text-xs text-gray-300">untracked</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

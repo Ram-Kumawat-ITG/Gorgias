@@ -32,6 +32,8 @@ export default function OrderDetailPage() {
   const [customerLoading, setCustomerLoading] = useState(false);
   const { toasts, addToast, addConfirmToast, removeToast } = useToast();
 
+  const [hasReturn, setHasReturn] = useState(false);
+
   // Modal states
   const [cancelModal, setCancelModal] = useState(false);
   const [refundModal, setRefundModal] = useState(false);
@@ -88,6 +90,14 @@ export default function OrderDetailPage() {
   }
 
   useEffect(() => { loadOrder(); }, [id, isDraft]);
+
+  // Check if a return request exists for this order (regular orders only)
+  useEffect(() => {
+    if (!id || isDraft) return;
+    api.get(`/returns/order/${id}`)
+      .then(res => setHasReturn((res.data || []).length > 0))
+      .catch(() => setHasReturn(false));
+  }, [id, isDraft]);
 
   // Fetch full customer profile once order is loaded and customer_id is known
   useEffect(() => {
@@ -307,6 +317,8 @@ export default function OrderDetailPage() {
   const isCancelled = !!order.cancelled_at;
   const isFulfilled = order.fulfillment_status === 'fulfilled';
   const isRefunded = order.financial_status === 'refunded';
+  // Shipped = any fulfillment exists (partial or full) — cancel is blocked once shipped
+  const isShipped = isFulfilled || order.fulfillment_status === 'partial';
   const isDraftOpen = !isOrder && order.status === 'open';
   const isDraftInvoiced = !isOrder && order.status === 'invoice_sent';
   const isDraftCompleted = !isOrder && order.status === 'completed';
@@ -628,17 +640,30 @@ export default function OrderDetailPage() {
                     <CreditCard size={15} /> Mark as Paid
                   </button>
                 )}
-                {isPaid && !isRefunded && (
+
+                {/* Refund — only after a return has been initiated */}
+                {isPaid && !isRefunded && isFulfilled && hasReturn && (
                   <button onClick={() => setRefundModal(true)} disabled={!!actionLoading}
                     className="btn-secondary w-full flex items-center justify-center gap-2 text-sm">
                     <DollarSign size={15} /> Refund
                   </button>
                 )}
-                <button onClick={() => setCancelModal(true)} disabled={!!actionLoading}
-                  className="btn-secondary w-full flex items-center justify-center gap-2 text-sm text-red-600 border-red-200 hover:bg-red-50">
-                  <Ban size={15} /> Cancel Order
-                </button>
-                {isPaid && (
+                {isPaid && !isRefunded && isFulfilled && !hasReturn && (
+                  <p className="text-xs text-gray-400 text-center py-1">Refund available after a return is initiated</p>
+                )}
+
+                {/* Cancel — only before any item has shipped */}
+                {!isShipped ? (
+                  <button onClick={() => setCancelModal(true)} disabled={!!actionLoading}
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-sm text-red-600 border-red-200 hover:bg-red-50">
+                    <Ban size={15} /> Cancel Order
+                  </button>
+                ) : (
+                  <p className="text-xs text-gray-400 text-center py-1">Cannot cancel — order has already shipped. Initiate a return instead.</p>
+                )}
+
+                {/* Return — only after order is fully delivered */}
+                {isPaid && isFulfilled && (
                   <button onClick={() => setReturnModal(true)} disabled={!!actionLoading}
                     className="btn-secondary w-full flex items-center justify-center gap-2 text-sm">
                     <RotateCcw size={15} /> Initiate Return
@@ -647,7 +672,16 @@ export default function OrderDetailPage() {
               </>
             )}
             {isOrder && isCancelled && (
-              <p className="text-sm text-red-500 text-center py-2">Order cancelled{order.cancel_reason ? `: ${order.cancel_reason}` : ''}</p>
+              <>
+                <p className="text-sm text-red-500 text-center py-2">Order cancelled{order.cancel_reason ? `: ${order.cancel_reason}` : ''}</p>
+                {/* Refund still available after cancellation if order was paid */}
+                {isPaid && !isRefunded && (
+                  <button onClick={() => setRefundModal(true)} disabled={!!actionLoading}
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-sm">
+                    <DollarSign size={15} /> Refund
+                  </button>
+                )}
+              </>
             )}
 
             {actionLoading && <p className="text-xs text-gray-400 text-center animate-pulse">{actionLoading}...</p>}
