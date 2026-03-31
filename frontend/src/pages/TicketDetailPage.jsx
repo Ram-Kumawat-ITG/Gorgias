@@ -202,13 +202,42 @@ export default function TicketDetailPage() {
                   {new Date(m.created_at).toLocaleString()}
                 </span>
               </div>
-              <p className="text-gray-800 whitespace-pre-wrap">{m.body}</p>
-              {m.whatsapp_media_url && (
-                <a href={m.whatsapp_media_url} target="_blank" rel="noopener noreferrer"
-                   className="text-xs text-brand-600 hover:underline mt-1 inline-block">
-                  View {m.whatsapp_media_type || 'media'}
-                </a>
-              )}
+              {(() => {
+                const waUrl = m.whatsapp_media_url;
+                const waType = m.whatsapp_media_type || '';
+                const hasMedia = waUrl && (waType === 'image' || waType === 'video' || waType.startsWith('image/') || waType.startsWith('video/'));
+                const isPlaceholder = hasMedia && /^\[.* received\]$/.test((m.body || '').trim());
+                return !isPlaceholder && m.body
+                  ? <p className="text-gray-800 whitespace-pre-wrap">{m.body}</p>
+                  : null;
+              })()}
+              {m.whatsapp_media_url && (() => {
+                const rawUrl = typeof m.whatsapp_media_url === 'string'
+                  ? m.whatsapp_media_url
+                  : m.whatsapp_media_url?.url || m.whatsapp_media_url?.link || null;
+                const mediaType = m.whatsapp_media_type || '';
+                if (!rawUrl) return null;
+
+                // If the media URL is a Meta Graph URL (requires Authorization),
+                // proxy it through our backend so the browser can fetch it.
+                const needsProxy = rawUrl.includes('graph.facebook.com') || rawUrl.includes('facebook.com');
+                const src = needsProxy
+                  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`
+                  : rawUrl;
+
+                if (mediaType === 'image' || mediaType.startsWith('image/')) {
+                  return <img src={src} alt="WhatsApp image" className="mt-2 max-w-xs rounded-lg" />;
+                }
+                if (mediaType === 'video' || mediaType.startsWith('video/')) {
+                  return <video src={src} controls className="mt-2 max-w-xs rounded-lg" />;
+                }
+                return (
+                  <a href={src} target="_blank" rel="noopener noreferrer"
+                     className="text-xs text-brand-600 hover:underline mt-1 inline-block">
+                    View {mediaType || 'media'}
+                  </a>
+                );
+              })()}
               {m.whatsapp_status && m.sender_type === 'agent' && (
                 <span className="flex items-center gap-1 text-xs text-gray-400 mt-1">
                   {m.whatsapp_status === 'sent' && <><Check size={12} /> Sent</>}

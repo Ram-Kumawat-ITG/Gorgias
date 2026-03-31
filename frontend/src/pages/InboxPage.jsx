@@ -1,9 +1,8 @@
 // Inbox page — ticket list with status tabs, pagination, and priority badges
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronLeft, ChevronRight, Mail, MessageSquare, FileText, RefreshCw } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Mail, MessageSquare, FileText } from 'lucide-react';
 import api from '../api/client';
-import { shopifyApi } from '../api/client';
 import SLABadge from '../components/SLABadge';
 import clsx from 'clsx';
 
@@ -62,8 +61,6 @@ export default function InboxPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
   const navigate = useNavigate();
   const limit = 20;
 
@@ -85,62 +82,16 @@ export default function InboxPage() {
     loadTickets();
   }, [status, page]);
 
-  async function handleSyncShopify() {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const res = await shopifyApi.syncOrders(50);
-      setSyncResult(res.data);
-      loadTickets();
-    } catch {
-      setSyncResult({ status: 'error', detail: 'Failed to sync Shopify orders.' });
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   const totalPages = Math.ceil(total / limit);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Inbox</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleSyncShopify}
-            disabled={syncing}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing...' : 'Sync Shopify'}
-          </button>
-          <button onClick={() => navigate('/tickets/new')} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> New Ticket
-          </button>
-        </div>
+        <button onClick={() => navigate('/tickets/new')} className="btn-primary flex items-center gap-2">
+          <Plus size={16} /> New Ticket
+        </button>
       </div>
-
-      {/* Sync result banner */}
-      {syncResult && (
-        <div className={clsx(
-          'mb-4 px-4 py-3 rounded-lg text-sm',
-          syncResult.status === 'error'
-            ? 'bg-red-50 text-red-700 border border-red-200'
-            : 'bg-green-50 text-green-700 border border-green-200'
-        )}>
-          {syncResult.status === 'error' ? (
-            syncResult.detail
-          ) : (
-            <>
-              Synced {syncResult.created} new order{syncResult.created !== 1 ? 's' : ''} from Shopify.
-              {syncResult.skipped > 0 && ` ${syncResult.skipped} already existed.`}
-            </>
-          )}
-          <button onClick={() => setSyncResult(null)} className="ml-2 underline hover:no-underline">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* Status tabs */}
       <div className="flex gap-1 mb-4">

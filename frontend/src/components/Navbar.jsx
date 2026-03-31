@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import useAuth from '../hooks/useAuth'
 
 export default function Navbar() {
   const { agent, logout } = useAuth()
@@ -10,7 +10,6 @@ export default function Navbar() {
 
   const handleLogout = () => {
     logout()
-    navigate('/login')
   }
 
   return (

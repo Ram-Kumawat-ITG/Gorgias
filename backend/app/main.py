@@ -10,8 +10,7 @@ from app.config import settings
 async def lifespan(app: FastAPI):
     # Startup
     await connect_db()
-    from app.services.sla_worker import start_sla_scheduler
-    start_sla_scheduler()
+    # SLA worker removed — no scheduled SLA checks
     yield
     # Shutdown
     await close_db()
@@ -44,14 +43,13 @@ async def health():
 
 # ── Register all routers ──────────────────────────────────────────────────────
 from app.routers import (
-    auth, tickets, customers, orders, returns,
+    tickets, customers, orders, returns,
     webhooks, email_inbound, ai, macros, automations,
-    sla, history, analytics, shopify, channels,
+    history, analytics, shopify, channels,
     instagram, merchants, whatsapp,
 )
-from app.routers.twitter import twitter_router, webhook_router
+from app.routers import media
 
-app.include_router(auth.router)
 app.include_router(tickets.router)
 app.include_router(customers.router)
 app.include_router(orders.router)
@@ -61,7 +59,6 @@ app.include_router(email_inbound.router)
 app.include_router(ai.router)
 app.include_router(macros.router)
 app.include_router(automations.router)
-app.include_router(sla.router)
 app.include_router(history.router)
 app.include_router(analytics.router)
 app.include_router(shopify.router)
@@ -69,5 +66,4 @@ app.include_router(channels.router)
 app.include_router(instagram.router)
 app.include_router(merchants.router)
 app.include_router(whatsapp.router)
-app.include_router(webhook_router)
-app.include_router(twitter_router)
+app.include_router(media.router)

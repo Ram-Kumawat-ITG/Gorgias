@@ -1,8 +1,6 @@
-// Root app component — routing with protected routes
+// Root app component — routing
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
-import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
 import InboxPage from './pages/InboxPage';
 import TicketDetailPage from './pages/TicketDetailPage';
 import NewTicketPage from './pages/NewTicketPage';
@@ -18,27 +16,12 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import RequestPage from './pages/RequestPage';
 import WhatsAppSettingsPage from './pages/WhatsAppSettingsPage';
 import InstagramSettingsPage from './pages/InstagramSettingsPage';
-import TwitterSettingsPage from './pages/TwitterSettingsPage';
 import EmailSettingsPage from './pages/EmailSettingsPage';
-
-function ProtectedRoute({ children }) {
-  const token = localStorage.getItem('token');
-  if (!token) return <Navigate to="/login" replace />;
-  return children;
-}
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
-      <Route
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
+      <Route element={<Layout />}>
         <Route path="/" element={<InboxPage />} />
         <Route path="/tickets/new" element={<NewTicketPage />} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
@@ -55,7 +38,6 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
         <Route path="/instagram-settings" element={<InstagramSettingsPage />} />
-        <Route path="/twitter-settings" element={<TwitterSettingsPage />} />
         <Route path="/email-settings" element={<EmailSettingsPage />} />
       </Route>
 

@@ -6,24 +6,6 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-api.interceptors.response.use(
-  res => res,
-  err => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('agent');
-      window.location.href = '/login';
-    }
-    return Promise.reject(err);
-  }
-);
-
 export const ticketsApi = {
   list: (params) => api.get('/tickets', { params }),
   get: (id) => api.get(`/tickets/${id}`),
@@ -34,9 +16,10 @@ export const ticketsApi = {
 }
 
 export const authApi = {
-  login: (email, password) => api.post('/auth/login', { email, password }),
-  me: () => api.get('/auth/me'),
-  register: (data) => api.post('/auth/signup', data),
+  // auth endpoints removed
+  login: () => Promise.reject(new Error('auth removed')),
+  me: () => Promise.reject(new Error('auth removed')),
+  register: () => Promise.reject(new Error('auth removed')),
 }
 
 export const shopifyApi = {

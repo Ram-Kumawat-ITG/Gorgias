@@ -1,86 +1,33 @@
-# Agent authentication router — JWT login and token validation
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt, JWTError
-import bcrypt
-from datetime import datetime, timedelta
-from app.config import settings
+"""
+Auth compatibility shim
+
+The project previously used JWT-based agent authentication with
+login/signup endpoints. These have been removed per the request to
+disable login/signup. Many routers depend on `get_current_agent` —
+to avoid changing all those call sites we provide a simple shim that
+returns a default active agent (if one exists) or a lightweight
+placeholder agent. This effectively removes the need for client
+login while keeping handler signatures intact.
+"""
+from fastapi import Depends
 from app.database import get_db
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+async def get_current_agent(_=None):
+    """Return the first active agent from DB or a placeholder.
 
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-
-
-def create_token(agent_id: str) -> str:
-    expire = datetime.utcnow() + timedelta(hours=12)
-    return jwt.encode({"sub": agent_id, "exp": expire}, settings.secret_key, algorithm="HS256")
-
-
-async def get_current_agent(token: str = Depends(oauth2_scheme)):
+    This replaces token-based lookup so endpoints that depend on
+    `get_current_agent` continue to receive an `agent` dict.
+    """
+    db = get_db()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        agent_id = payload.get("sub")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    db = get_db()
-    agent = await db.agents.find_one({"id": agent_id, "is_active": True})
-    if not agent:
-        raise HTTPException(status_code=401, detail="Agent not found")
-    return agent
-
-
-@router.post("/login")
-async def login(form: OAuth2PasswordRequestForm = Depends()):
-    db = get_db()
-    agent = await db.agents.find_one({"email": form.username})
-    if not agent or not verify_password(form.password, agent.get("hashed_password", "")):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {
-        "access_token": create_token(agent["id"]),
-        "token_type": "bearer",
-        "agent": {
-            "id": agent["id"],
-            "email": agent["email"],
-            "full_name": agent["full_name"],
-            "role": agent["role"],
-        },
-    }
-
-
-@router.post("/signup")
-async def signup(form: OAuth2PasswordRequestForm = Depends()):
-    db = get_db()
-    existing = await db.agents.find_one({"email": form.username})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    from app.models.agent import AgentInDB
-    agent = AgentInDB(
-        email=form.username,
-        full_name=form.username.split("@")[0].replace(".", " ").title(),
-        role="agent",
-        hashed_password=hash_password(form.password),
-    )
-    await db.agents.insert_one(agent.model_dump())
-    return {
-        "access_token": create_token(agent.id),
-        "token_type": "bearer",
-        "agent": {
-            "id": agent.id,
-            "email": agent.email,
-            "full_name": agent.full_name,
-            "role": agent.role,
-        },
-    }
-
-
-@router.get("/me")
-async def me(agent=Depends(get_current_agent)):
-    return {k: v for k, v in agent.items() if k not in ["_id", "hashed_password"]}
+        agent = await db.agents.find_one({"is_active": True})
+        if agent:
+            # strip sensitive fields
+            agent.pop("_id", None)
+            agent.pop("hashed_password", None)
+            return agent
+    except Exception:
+        pass
+    # Fallback placeholder
+    return {"id": "local-admin", "email": "admin@local", "full_name": "Local Admin", "role": "admin"}

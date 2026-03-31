@@ -49,11 +49,9 @@ const NAV_ITEMS = [
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
   { to: '/requests', icon: FileText, label: 'Requests' },
-  { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
   { to: '/whatsapp-settings', icon: WhatsAppIcon, label: 'WhatsApp' },
   { to: '/instagram-settings', icon: InstagramIcon, label: 'Instagram' },
-{ to: '/twitter-settings', icon: XIcon, label: 'Twitter / X' },
-{ to: '/email-settings', icon: Mail, label: 'Email' },
+  { to: '/email-settings', icon: Mail, label: 'Email' },
 ];
 
 export default function Sidebar() {
@@ -84,16 +82,7 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <div className="px-4 py-4 border-t border-gray-100">
-        <p className="text-sm font-medium text-gray-900 truncate">{agent?.full_name || 'Agent'}</p>
-        <p className="text-xs text-gray-400 truncate">{agent?.email}</p>
-        <button
-          onClick={logout}
-          className="mt-2 flex items-center gap-2 text-xs text-gray-500 hover:text-red-500 transition-colors"
-        >
-          <LogOut size={14} /> Log out
-        </button>
-      </div>
+      {/* Admin info removed per request */}
     </aside>  
   );
 }
