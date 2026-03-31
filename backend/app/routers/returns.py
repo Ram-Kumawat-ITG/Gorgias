@@ -71,6 +71,60 @@ async def list_returns(
     return {"returns": returns, "total": total, "page": page, "limit": limit}
 
 
+# ─── INVENTORY CHECK (must be before /{return_id}) ───
+@router.get("/{return_id}/inventory")
+async def check_return_inventory(return_id: str, agent=Depends(get_current_agent)):
+    """Read-only: fetch current Shopify inventory for each returned item."""
+    db = get_db()
+    ret = await db.returns.find_one({"id": return_id})
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+
+    try:
+        order_data = await shopify_get(f"/orders/{ret['order_id']}.json")
+        order = order_data.get("order", {})
+    except ShopifyAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Could not fetch order: {e.message}")
+
+    # Build lookup: line_item_id → variant_id
+    order_line_items = {str(li["id"]): li for li in order.get("line_items", [])}
+
+    results = []
+    for item in ret.get("items", []):
+        entry = {
+            "title": item.get("title", ""),
+            "variant_title": item.get("variant_title"),
+            "sku": item.get("sku"),
+            "inventory_quantity": None,
+            "inventory_policy": None,
+            "error": None,
+        }
+        line_item = order_line_items.get(str(item.get("line_item_id", "")))
+        if not line_item:
+            entry["error"] = "Line item not found in order"
+            results.append(entry)
+            continue
+
+        variant_id = line_item.get("variant_id")
+        if not variant_id:
+            entry["error"] = "No variant ID on line item"
+            results.append(entry)
+            continue
+
+        try:
+            variant_data = await shopify_get(f"/variants/{variant_id}.json")
+            variant = variant_data.get("variant", {})
+            entry["variant_id"] = str(variant_id)
+            entry["inventory_quantity"] = variant.get("inventory_quantity")
+            entry["inventory_policy"] = variant.get("inventory_management")  # "shopify" or null
+        except ShopifyAPIError:
+            entry["error"] = "Could not fetch variant from Shopify"
+
+        results.append(entry)
+
+    return {"items": results}
+
+
 # ─── GET ONE ───
 @router.get("/{return_id}")
 async def get_return(return_id: str, agent=Depends(get_current_agent)):
@@ -111,6 +165,7 @@ async def create_return(data: ReturnCreate, agent=Depends(get_current_agent)):
         items=[item.model_dump() for item in data.items],
         reason=data.reason, reason_notes=data.reason_notes,
         resolution=data.resolution, return_tag=tag,
+        images=data.images or [],
         status_history=[{
             "status": "requested", "timestamp": datetime.utcnow(),
             "actor_type": "admin", "actor_id": agent["id"],
@@ -163,6 +218,7 @@ async def create_return_customer(data: ReturnCreate):
         items=[item.model_dump() for item in data.items],
         reason=data.reason, reason_notes=data.reason_notes,
         resolution=data.resolution, return_tag=tag,
+        images=data.images or [],
         status_history=[{
             "status": "requested", "timestamp": datetime.utcnow(),
             "actor_type": "customer", "note": "Return created by customer",
