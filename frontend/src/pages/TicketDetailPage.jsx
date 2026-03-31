@@ -60,6 +60,17 @@ export default function TicketDetailPage() {
 
   useEffect(() => { loadTicket(); }, [id]);
 
+  // Silent background poll — refreshes messages every 4 seconds without showing the loading spinner
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const mRes = await api.get(`/tickets/${id}/messages`);
+        setMessages(mRes.data);
+      } catch {}
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [id]);
+
   async function sendMessage(isNote = false) {
     if (!reply.trim()) return;
     setSending(true);

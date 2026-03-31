@@ -15,6 +15,7 @@ export default function WhatsAppSettingsPage() {
     whatsapp_app_secret: '',
   });
 
+
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success'|'error', message }
   const navigate = useNavigate();

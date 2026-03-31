@@ -341,9 +341,14 @@ export default function RequestPage() {
   const [aiResult, setAiResult] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
+  const [aiProcessResult, setAiProcessResult] = useState(null)  // result from autonomous process
   const [editableData, setEditableData] = useState({})
   const [activeActionIndex, setActiveActionIndex] = useState(null)
   const [actionResult, setActionResult] = useState({})
+
+  // Track which ticket has been auto-analyzed + previous message count for change detection
+  const autoAnalyzedForRef = useRef(null)
+  const prevMsgCountRef = useRef(0)
 
   // Load channels on mount
   useEffect(() => {
@@ -391,6 +396,41 @@ export default function RequestPage() {
       .catch(() => setMessages([]))
       .finally(() => setMessagesLoading(false))
   }, [selectedId])
+
+  // Silent background poll — refresh messages every 4 s while a ticket is open
+  useEffect(() => {
+    if (!selectedId) return
+    const interval = setInterval(() => {
+      ticketsApi.messages(selectedId)
+        .then(res => setMessages((res.data || []).map(normalizeMsg)))
+        .catch(() => {})
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [selectedId])
+
+  // Autonomous AI processing:
+  //   • WhatsApp tickets → call processTicket (executes Shopify + sends WA reply + saves to DB)
+  //   • Other channels  → call analyze (suggestions only, no auto-send)
+  //   Triggers on first load and whenever a new customer message arrives
+  useEffect(() => {
+    if (!selectedTicket || !messages.length || aiLoading) return
+
+    const lastMsg = messages[messages.length - 1]
+    const isNewCustomerMsg =
+      messages.length > prevMsgCountRef.current && lastMsg?.sender === 'customer'
+    const isFirstLoad = autoAnalyzedForRef.current !== selectedId
+
+    prevMsgCountRef.current = messages.length
+
+    if (!isFirstLoad && !isNewCustomerMsg) return
+    autoAnalyzedForRef.current = selectedId
+
+    if (selectedTicket.channel === 'whatsapp') {
+      handleProcessTicket()
+    } else {
+      handleAnalyze()
+    }
+  }, [messages])
 
   // Fetch live Shopify order + customer when a ticket is opened
   useEffect(() => {
@@ -462,9 +502,12 @@ export default function RequestPage() {
     setSelectedTicket(cached)
     setAiResult(null)
     setAiError('')
+    setAiProcessResult(null)
     setEditableData({})
     setActiveActionIndex(null)
     setActionResult({})
+    autoAnalyzedForRef.current = null
+    prevMsgCountRef.current = 0
 
     // Then fetch the FULL ticket document from the DB so shopify_order_id
     // and every other stored field is guaranteed to be present
@@ -622,11 +665,42 @@ export default function RequestPage() {
     }
   }
 
+  // Fully autonomous — process + send WA reply + save to DB, then refresh messages
+  async function handleProcessTicket() {
+    if (!selectedTicket) return
+    setAiLoading(true)
+    setAiError('')
+    setAiResult(null)
+    setAiProcessResult(null)
+    try {
+      const res = await aiApi.processTicket(selectedTicket.id)
+      const data = res.data
+
+      if (data.status === 'success') {
+        setAiProcessResult(data)
+        // Refresh messages so the AI reply appears immediately in the thread
+        ticketsApi.messages(selectedTicket.id)
+          .then(r => setMessages((r.data || []).map(normalizeMsg)))
+          .catch(() => {})
+      } else if (data.status === 'analysis_only') {
+        // Non-WhatsApp fallback — show suggestions panel
+        setAiResult(data.analysis)
+      } else {
+        setAiError(data.reason || 'AI processing failed')
+      }
+    } catch (err) {
+      setAiError(err.response?.data?.detail || err.message || 'AI processing failed')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   async function handleAnalyze() {
     if (!selectedTicket) return
     setAiLoading(true)
     setAiError('')
     setAiResult(null)
+    setAiProcessResult(null)
     try {
       const res = await aiApi.analyze({
         subject: selectedTicket.subject,
@@ -714,31 +788,108 @@ export default function RequestPage() {
                 ))}
               </div>
 
-              {/* AI Analyze button */}
-              <div className="mb-6">
-                <button
-                  onClick={handleAnalyze}
-                  disabled={aiLoading}
-                  className="btn-primary flex items-center gap-2"
-                >
-                  {aiLoading ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                      Analyze with AI
-                    </>
-                  )}
-                </button>
+              {/* AI Agent status bar */}
+              <div className="mb-4">
+                {selectedTicket.channel === 'whatsapp' ? (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 text-xs font-medium">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                      AI Agent — Fully Autonomous
+                    </div>
+                    {aiLoading ? (
+                      <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                        <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Processing &amp; sending reply…
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleProcessTicket}
+                        disabled={aiLoading}
+                        className="text-xs text-gray-400 hover:text-gray-600 underline"
+                      >
+                        Run again
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={aiLoading}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    {aiLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        Analyze with AI
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
+
+              {/* WhatsApp autonomous process result card */}
+              {aiProcessResult && aiProcessResult.status === 'success' && (
+                <div className={`mb-4 rounded-xl border px-4 py-3 space-y-2 ${
+                  aiProcessResult.reply_sent
+                    ? 'border-green-200 bg-green-50'
+                    : 'border-orange-200 bg-orange-50'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {aiProcessResult.reply_sent ? (
+                      <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    <span className={`text-xs font-semibold ${aiProcessResult.reply_sent ? 'text-green-800' : 'text-orange-800'}`}>
+                      {aiProcessResult.reply_sent
+                        ? 'AI replied to customer via WhatsApp ✓'
+                        : 'AI reply generated — WhatsApp delivery failed'}
+                    </span>
+                  </div>
+
+                  {/* Show send error prominently */}
+                  {aiProcessResult.send_error && (
+                    <div className="bg-orange-100 border border-orange-200 rounded-lg px-3 py-2">
+                      <p className="text-xs font-medium text-orange-700 mb-0.5">Meta API error:</p>
+                      <p className="text-xs text-orange-800 font-mono break-all">{aiProcessResult.send_error}</p>
+                    </div>
+                  )}
+
+                  <div className="bg-white border border-gray-100 rounded-lg px-3 py-2">
+                    <p className="text-xs text-gray-500 mb-1">
+                      {aiProcessResult.reply_sent ? 'Message sent to customer:' : 'Generated reply (not delivered):'}
+                    </p>
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{aiProcessResult.ai_reply}</p>
+                  </div>
+                  <button
+                    onClick={handleProcessTicket}
+                    disabled={aiLoading}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Run agent again
+                  </button>
+                </div>
+              )}
 
               {/* AI Error */}
               {aiError && (

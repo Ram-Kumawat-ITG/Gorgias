@@ -1,7 +1,6 @@
 # WhatsApp webhook router — handles Meta webhook verification and inbound messages
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import PlainTextResponse
-from datetime import datetime
 from app.config import settings
 from app.database import get_db
 from app.services.whatsapp_service import (
@@ -10,7 +9,6 @@ from app.services.whatsapp_service import (
     mark_as_read,
     download_media,
 )
-from app.services.activity_service import log_activity
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp"])
 
@@ -161,7 +159,6 @@ async def _handle_messages(value: dict):
         wa_message_id = msg.get("id", "")
         from_phone = msg.get("from", "")  # customer's phone number
         msg_type = msg.get("type", "text")
-        timestamp = msg.get("timestamp", "")
 
         # Extract message body based on type
         body = ""
@@ -205,7 +202,7 @@ async def _handle_messages(value: dict):
 
         # Create or update ticket via ticket_service
         from app.services.ticket_service import create_ticket_from_whatsapp
-        await create_ticket_from_whatsapp(
+        ticket_doc = await create_ticket_from_whatsapp(
             phone=from_phone,
             customer_name=contact_name,
             message_body=body,
@@ -214,6 +211,51 @@ async def _handle_messages(value: dict):
             media_type=media_type,
             merchant_id=merchant_id,
         )
+
+        # Auto-reply via AI Sales Agent for every inbound customer message
+        if body:
+            try:
+                from app.services.whatsapp_ai_agent import process_whatsapp_message
+                from app.services.whatsapp_service import send_text_message
+                from app.models.message import MessageInDB as _MsgInDB
+
+                ticket_id = ticket_doc.get("id", "")
+                if ticket_id:
+                    ai_reply = await process_whatsapp_message(
+                        ticket_id=ticket_id,
+                        phone_number_id=phone_number_id,
+                        customer_phone=from_phone,
+                        current_message=body,
+                        merchant_id=merchant_id,
+                        customer_name=contact_name,
+                    )
+                    if ai_reply:
+                        wa_config = await get_whatsapp_config(merchant_id)
+                        wa_result = await send_text_message(from_phone, ai_reply, wa_config)
+                        messages_list = wa_result.get("messages") or []
+                        sent_id = messages_list[0].get("id") if messages_list else None
+                        wa_status = "sent" if sent_id else "failed"
+                        if not sent_id:
+                            send_error = wa_result.get("error") or wa_result.get("detail") or str(wa_result)
+                            print(
+                                f"[WhatsApp] AI reply NOT delivered\n"
+                                f"  to={from_phone}\n"
+                                f"  error={send_error}\n"
+                                f"  config phone_number_id={wa_config.get('phone_number_id')}\n"
+                                f"  token_set={bool(wa_config.get('access_token'))}"
+                            )
+                        reply_msg = _MsgInDB(
+                            ticket_id=ticket_id,
+                            body=ai_reply,
+                            sender_type="agent",
+                            channel="whatsapp",
+                            ai_generated=True,
+                            whatsapp_message_id=sent_id,
+                            whatsapp_status=wa_status,
+                        )
+                        await db.messages.insert_one(reply_msg.model_dump())
+            except Exception as _ai_err:
+                print(f"WhatsApp AI agent auto-reply failed: {_ai_err}")
 
 
 async def _handle_statuses(value: dict):

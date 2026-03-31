@@ -250,44 +250,33 @@ async def add_message(ticket_id: str, data: MessageCreate, agent=Depends(get_cur
 
         if channel == "whatsapp":
             try:
-                from app.services.whatsapp_service import (
-                    get_whatsapp_config,
-                    send_text_message,
-                    send_template_message,
-                    is_within_24h_window,
-                )
+                from app.services.whatsapp_service import get_whatsapp_config, send_text_message
                 config = await get_whatsapp_config(ticket.get("merchant_id"))
                 wa_phone = ticket.get("whatsapp_phone")
                 if wa_phone:
-                    last_msg_at = ticket.get("whatsapp_last_customer_msg_at")
-                    if is_within_24h_window(last_msg_at):
-                        result = await send_text_message(wa_phone, data.body, config)
-                        wa_msg_id = ""
-                        if "messages" in result:
-                            wa_msg_id = result["messages"][0].get("id", "")
-                        if wa_msg_id:
-                            await db.messages.update_one(
-                                {"id": msg.id},
-                                {"$set": {
-                                    "whatsapp_message_id": wa_msg_id,
-                                    "whatsapp_status": "sent",
-                                    "channel": "whatsapp",
-                                }},
-                            )
-                    else:
-                        result = await send_template_message(
-                            to_phone=wa_phone,
-                            template_name="customer_support_reply",
-                            language_code="en",
-                            components=[{
-                                "type": "body",
-                                "parameters": [{"type": "text", "text": data.body[:1024]}],
-                            }],
-                            config=config,
+                    result = await send_text_message(wa_phone, data.body, config)
+                    wa_msg_id = (result.get("messages") or [{}])[0].get("id", "")
+                    if wa_msg_id:
+                        await db.messages.update_one(
+                            {"id": msg.id},
+                            {"$set": {
+                                "whatsapp_message_id": wa_msg_id,
+                                "whatsapp_status": "sent",
+                                "channel": "whatsapp",
+                            }},
                         )
-                        print(f"Sent template message (24h window expired): {result}")
+                    else:
+                        print(f"WhatsApp send failed for ticket {ticket_id}: {result}")
+                        await db.messages.update_one(
+                            {"id": msg.id},
+                            {"$set": {"whatsapp_status": "failed", "channel": "whatsapp"}},
+                        )
             except Exception as e:
                 print(f"WhatsApp send error: {e}")
+                await db.messages.update_one(
+                    {"id": msg.id},
+                    {"$set": {"whatsapp_status": "failed"}},
+                )
         elif channel == "twitter":
             try:
                 from app.services.twitter_service import (

@@ -33,12 +33,20 @@ async def get_whatsapp_config(merchant_id: str = None) -> dict:
 
 async def send_text_message(to_phone: str, text: str, config: dict) -> dict:
     """Send a free-form text message to a WhatsApp number."""
-    phone_number_id = config["phone_number_id"]
-    access_token = config["access_token"]
+    phone_number_id = config.get("phone_number_id", "")
+    access_token = config.get("access_token", "")
 
     if not phone_number_id or not access_token:
-        print("WhatsApp not configured — skipping message send")
-        return {"error": "not_configured"}
+        msg = f"WhatsApp not configured — phone_number_id={bool(phone_number_id)} access_token={bool(access_token)}"
+        print(msg)
+        return {"error": "not_configured", "detail": msg}
+
+    # WhatsApp max message length is 4096 characters
+    if len(text) > 4096:
+        text = text[:4090] + "…"
+
+    # Normalize phone number — remove leading + if present
+    to_phone_clean = to_phone.lstrip("+")
 
     url = f"{GRAPH_API_BASE}/{phone_number_id}/messages"
     headers = {
@@ -48,7 +56,7 @@ async def send_text_message(to_phone: str, text: str, config: dict) -> dict:
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
-        "to": to_phone,
+        "to": to_phone_clean,
         "type": "text",
         "text": {"preview_url": False, "body": text},
     }
@@ -56,13 +64,37 @@ async def send_text_message(to_phone: str, text: str, config: dict) -> dict:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(url, json=payload, headers=headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-            print(f"WhatsApp message sent to {to_phone}: {data}")
-            return data
+
+            # Always read the response body before raise_for_status
+            # so we can log the actual Meta API error detail
+            try:
+                resp_body = r.json()
+            except Exception:
+                resp_body = {"raw": r.text}
+
+            if r.status_code >= 400:
+                error_detail = resp_body.get("error", {})
+                error_msg = (
+                    error_detail.get("message")
+                    or error_detail.get("error_user_msg")
+                    or str(resp_body)
+                )
+                print(
+                    f"[WhatsApp] SEND FAILED to={to_phone_clean} "
+                    f"status={r.status_code} error={error_msg} "
+                    f"full_response={resp_body}"
+                )
+                return {"error": error_msg, "status_code": r.status_code, "meta_response": resp_body}
+
+            print(f"[WhatsApp] SENT to={to_phone_clean} response={resp_body}")
+            return resp_body
+
+    except httpx.TimeoutException:
+        print(f"[WhatsApp] TIMEOUT sending to {to_phone_clean}")
+        return {"error": "timeout", "detail": "WhatsApp API timed out"}
     except Exception as e:
-        print(f"WhatsApp send failed: {e}")
-        return {"error": str(e)}
+        print(f"[WhatsApp] NETWORK ERROR sending to {to_phone_clean}: {e}")
+        return {"error": "network_error", "detail": str(e)}
 
 
 async def send_template_message(

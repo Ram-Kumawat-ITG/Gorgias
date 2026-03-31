@@ -29,6 +29,7 @@ export const shopifyApi = {
 
 export const aiApi = {
   analyze: (data) => api.post('/ai/analyze', data),
+  processTicket: (ticketId) => api.post(`/ai/process-ticket/${ticketId}`),
 }
 
 export const channelsApi = {

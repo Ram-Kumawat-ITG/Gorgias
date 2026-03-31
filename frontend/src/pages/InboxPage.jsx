@@ -82,6 +82,36 @@ export default function InboxPage() {
     loadTickets();
   }, [status, page]);
 
+  // Silent background poll — checks for new inbound tickets every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const params = { status, page, limit };
+      if (channel) params.channel = channel;
+      if (ticketType) params.ticket_type = ticketType;
+      api.get('/tickets', { params })
+        .then(res => {
+          setTickets(res.data.tickets);
+          setTotal(res.data.total);
+        })
+        .catch(() => {});
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [status, page, channel, ticketType]);
+
+  async function handleSyncShopify() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await shopifyApi.syncOrders(50);
+      setSyncResult(res.data);
+      loadTickets();
+    } catch {
+      setSyncResult({ status: 'error', detail: 'Failed to sync Shopify orders.' });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const totalPages = Math.ceil(total / limit);
 
   return (
