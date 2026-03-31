@@ -29,11 +29,6 @@ class OrderCreatePayload(BaseModel):
     financial_status: Optional[str] = "pending"  # "paid" | "pending"
 
 
-class OrderUpdatePayload(BaseModel):
-    note: Optional[str] = None
-    tags: Optional[str] = None
-
-
 class CancelPayload(BaseModel):
     reason: str = "other"  # customer, inventory, fraud, declined, other
     restock: bool = True

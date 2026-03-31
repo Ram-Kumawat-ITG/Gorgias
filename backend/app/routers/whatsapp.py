@@ -23,19 +23,18 @@ async def verify_webhook(
 ):
     """Meta webhook verification — responds with hub.challenge if token matches."""
     if hub_mode == "subscribe":
-        # Check against global config first
-        verify_token = settings.whatsapp_verify_token
-        if not verify_token:
-            # Try to find any merchant with a matching verify token
-            db = get_db()
-            merchant = await db.merchants.find_one(
-                {"whatsapp_verify_token": hub_verify_token, "is_active": True}
-            )
-            if merchant:
-                return PlainTextResponse(content=hub_challenge)
-            raise HTTPException(status_code=403, detail="Invalid verify token")
+        # Check global config first
+        global_token = settings.whatsapp_verify_token
+        if global_token and hub_verify_token == global_token:
+            return PlainTextResponse(content=hub_challenge)
 
-        if hub_verify_token == verify_token:
+        # Always fall through to merchant lookup — covers both "no global token" and
+        # "global token set but this webhook is for a different (merchant) WABA"
+        db = get_db()
+        merchant = await db.merchants.find_one(
+            {"whatsapp_verify_token": hub_verify_token, "is_active": True}
+        )
+        if merchant:
             return PlainTextResponse(content=hub_challenge)
 
     raise HTTPException(status_code=403, detail="Verification failed")
@@ -88,10 +87,37 @@ async def receive_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
 
-    # Verify signature — try global config first, then merchant configs
-    app_secret = settings.whatsapp_app_secret
-    if app_secret and not verify_webhook_signature(body, signature, app_secret):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    # Verify signature — try global secret first, then merchant-specific secret.
+    # Only hard-reject when a secret IS configured but the signature doesn't match.
+    if signature:
+        global_secret = settings.whatsapp_app_secret
+        sig_ok = bool(global_secret) and verify_webhook_signature(body, signature, global_secret)
+
+        if not sig_ok:
+            # Parse payload to find phone_number_id → look up merchant secret
+            import json as _json
+            try:
+                _temp = _json.loads(body)
+                _phone_id = (
+                    _temp.get("entry", [{}])[0]
+                    .get("changes", [{}])[0]
+                    .get("value", {})
+                    .get("metadata", {})
+                    .get("phone_number_id", "")
+                )
+                if _phone_id:
+                    _db = get_db()
+                    _merchant = await _db.merchants.find_one(
+                        {"whatsapp_phone_number_id": _phone_id, "is_active": True}
+                    )
+                    if _merchant and _merchant.get("whatsapp_app_secret"):
+                        sig_ok = verify_webhook_signature(body, signature, _merchant["whatsapp_app_secret"])
+            except Exception:
+                pass
+
+        # Reject only if a secret was configured but the signature didn't match
+        if not sig_ok and global_secret:
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     import json
     try:

@@ -50,7 +50,7 @@ export default function App() {
         <Route path="/returns/:id" element={<ReturnDetailPage />} />
         <Route path="/macros" element={<MacrosPage />} />
         <Route path="/automations" element={<AutomationsPage />} />
-<Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/requests" element={<RequestPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
@@ -63,3 +63,4 @@ export default function App() {
     </Routes>
   );
 }
+

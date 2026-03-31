@@ -1,32 +1,40 @@
 # FastAPI application entry point — registers all routers and lifecycle events
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import connect_db, close_db
+from app.config import settings
 
-app = FastAPI(title="Shopify Helpdesk API", version="2.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await connect_db()
+    from app.services.sla_worker import start_sla_scheduler
+    start_sla_scheduler()
+    yield
+    # Shutdown
+    await close_db()
+    from app.services.shopify_client import close_shopify_client
+    await close_shopify_client()
+
+
+app = FastAPI(title="Shopify Helpdesk API", version="2.0.0", lifespan=lifespan)
+
+# CORS — reads allowed origins from env (comma-separated), falls back to localhost for dev
+_raw_origins = getattr(settings, "cors_origins", "") or ""
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()] or [
+    "http://localhost:5173",
+    "http://localhost:8000",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:8000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    await connect_db()
-    from app.services.sla_worker import start_sla_scheduler
-    start_sla_scheduler()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    await close_db()
 
 
 @app.get("/health")
@@ -34,29 +42,14 @@ async def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
-# Register all routers
+# ── Register all routers ──────────────────────────────────────────────────────
 from app.routers import (
-    auth,
-    tickets,
-    customers,
-    orders,
-    webhooks,
-    email_inbound,
-    ai,
-    macros,
-    automations,
-    sla,
-    history,
-    analytics,
-    shopify,
-    channels,
-    instagram,
+    auth, tickets, customers, orders, returns,
+    webhooks, email_inbound, ai, macros, automations,
+    sla, history, analytics, shopify, channels,
+    instagram, merchants, whatsapp,
 )
-from app.routers import auth, tickets, customers, orders, returns, webhooks, email_inbound, ai, macros, automations, sla, history, analytics
-# from app.routers import auth, tickets, customers, webhooks, email_inbound, ai, macros, automations, sla, history, analytics, merchants
-# from app.routers import auth, tickets, customers, orders, webhooks, email_inbound, ai, macros, automations, sla, history, analytics
-
-from app.routers import auth, tickets, customers, orders, returns, webhooks, email_inbound, ai, macros, automations, sla, history, analytics, merchants, whatsapp, instagram
+from app.routers.twitter import twitter_router, webhook_router
 
 app.include_router(auth.router)
 app.include_router(tickets.router)
@@ -76,8 +69,5 @@ app.include_router(channels.router)
 app.include_router(instagram.router)
 app.include_router(merchants.router)
 app.include_router(whatsapp.router)
-app.include_router(instagram.router)
-# Twitter split: webhooks + settings
-from app.routers.twitter import twitter_router, webhook_router
 app.include_router(webhook_router)
 app.include_router(twitter_router)

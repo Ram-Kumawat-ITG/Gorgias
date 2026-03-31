@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     shopify_access_token: str = ""
     openai_api_key: str = ""
     groq_api_key: str = ""
-    secret_key: str = "default-dev-secret-change-in-production-minimum-32-chars"
+    secret_key: str  # required — no default; app will refuse to start if unset
+    cors_origins: str = ""  # comma-separated list e.g. "https://app.example.com,https://admin.example.com"
     mailgun_api_key: str = ""
     mailgun_domain: str = ""
     mailgun_webhook_signing_key: str = ""

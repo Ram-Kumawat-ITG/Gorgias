@@ -11,6 +11,24 @@ HEADERS = {
 }
 MAX_RETRIES = 3
 
+# Module-level persistent client — reuses TCP connections across all requests
+# Closed by the app lifespan shutdown handler via close_shopify_client()
+_client: httpx.AsyncClient | None = None
+
+
+def get_shopify_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=30.0)
+    return _client
+
+
+async def close_shopify_client():
+    global _client
+    if _client and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
 
 class ShopifyAPIError(Exception):
     def __init__(self, status_code: int, errors: dict, message: str = ""):
@@ -40,9 +58,9 @@ def _parse_shopify_error(response: httpx.Response) -> str:
 async def _request_with_retry(method: str, endpoint: str, **kwargs):
     """Execute an HTTP request with automatic retry on 429 (rate limit)."""
     url = f"{SHOPIFY_BASE_URL}{endpoint}"
+    client = get_shopify_client()
     for attempt in range(MAX_RETRIES + 1):
-        async with httpx.AsyncClient() as client:
-            r = await getattr(client, method)(url, headers=HEADERS, timeout=30.0, **kwargs)
+        r = await getattr(client, method)(url, headers=HEADERS, **kwargs)
 
         if r.status_code == 429:
             retry_after = float(r.headers.get("Retry-After", 2.0))

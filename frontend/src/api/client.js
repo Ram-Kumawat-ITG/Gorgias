@@ -36,7 +36,7 @@ export const ticketsApi = {
 export const authApi = {
   login: (email, password) => api.post('/auth/login', { email, password }),
   me: () => api.get('/auth/me'),
-  register: (data) => api.post('/auth/register', data),
+  register: (data) => api.post('/auth/signup', data),
 }
 
 export const shopifyApi = {
