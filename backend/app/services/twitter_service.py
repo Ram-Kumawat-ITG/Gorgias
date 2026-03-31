@@ -16,7 +16,7 @@ async def get_twitter_config(merchant_id: str = None) -> dict:
     """Get Twitter config — merchant-specific first, then fall back to global .env."""
     if merchant_id:
         db = get_db()
-        merchant = await db.merchants.find_one({"id": merchant_id, "is_active": True})
+        merchant = await db.merchants.find_one({"id": merchant_id, "is_active": {"$ne": False}})
         if merchant and merchant.get("twitter_api_key"):
             return {
                 "api_key": merchant["twitter_api_key"],

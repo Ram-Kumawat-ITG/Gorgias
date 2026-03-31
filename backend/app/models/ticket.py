@@ -92,5 +92,8 @@ class TicketInDB(BaseModel):
     twitter_username: Optional[str] = None   # @handle of the customer
     twitter_type: Optional[str] = None       # "dm" or "mention"
     twitter_last_tweet_id: Optional[str] = None  # last tweet/DM id for threading
+    # Shopify order link (latest order at ticket creation time)
+    shopify_order_id: Optional[str] = None
+    shopify_order_number: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

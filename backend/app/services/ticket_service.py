@@ -62,6 +62,22 @@ TICKET_TYPE_KEYWORDS = {
 }
 
 
+async def _fetch_latest_order_snapshot(customer_email: str) -> dict:
+    """Return the most recent order snapshot for a real customer email.
+    Returns empty dict for placeholder emails (whatsapp/instagram/twitter) or if not found."""
+    if not customer_email or customer_email.endswith(".placeholder"):
+        return {}
+    db = get_db()
+    try:
+        snapshot = await db.order_snapshots.find_one(
+            {"email": customer_email},
+            sort=[("created_at", -1)],
+        )
+        return snapshot or {}
+    except Exception:
+        return {}
+
+
 def classify_ticket_type(subject: str, body: str = "") -> str:
     """Classify ticket type based on keywords in subject and body."""
     text = f"{subject} {body}".lower()
@@ -121,6 +137,7 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         existing["_id"] = str(existing["_id"])
         return existing
 
+    order_snapshot = await _fetch_latest_order_snapshot(customer_email)
     ticket = TicketInDB(
         subject=subject,
         customer_email=customer_email,
@@ -129,6 +146,8 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         merchant_id=merchant_id,
         channel="email",
         ticket_type=classify_ticket_type(subject, body),
+        shopify_order_id=order_snapshot.get("shopify_order_id") or None,
+        shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)
@@ -243,6 +262,7 @@ async def create_ticket_from_whatsapp(
         return existing
 
     # Create new ticket
+    order_snapshot = await _fetch_latest_order_snapshot(customer_email)
     ticket = TicketInDB(
         subject=f"WhatsApp: {customer_name or phone}",
         customer_email=customer_email,
@@ -252,6 +272,8 @@ async def create_ticket_from_whatsapp(
         whatsapp_phone=phone,
         whatsapp_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"WhatsApp: {customer_name or phone}", message_body),
+        shopify_order_id=order_snapshot.get("shopify_order_id") or None,
+        shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)
@@ -351,6 +373,7 @@ async def create_ticket_from_instagram(
         existing["_id"] = str(existing["_id"])
         return existing
 
+    order_snapshot = await _fetch_latest_order_snapshot(placeholder_email)
     ticket = TicketInDB(
         subject=f"Instagram DM: {igsid}",
         customer_email=placeholder_email,
@@ -359,6 +382,8 @@ async def create_ticket_from_instagram(
         instagram_user_id=igsid,
         instagram_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"Instagram DM: {igsid}", message_body),
+        shopify_order_id=order_snapshot.get("shopify_order_id") or None,
+        shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)
@@ -474,6 +499,7 @@ async def create_ticket_from_twitter(
 
     # Create new ticket
     type_label = "DM" if twitter_type == "dm" else "Mention"
+    order_snapshot = await _fetch_latest_order_snapshot(placeholder_email)
     ticket = TicketInDB(
         subject=f"Twitter {type_label}: @{sender_handle or twitter_sender_id}",
         customer_email=placeholder_email,
@@ -487,6 +513,8 @@ async def create_ticket_from_twitter(
         ticket_type=classify_ticket_type(
             f"Twitter {type_label}: @{sender_handle}", message_body
         ),
+        shopify_order_id=order_snapshot.get("shopify_order_id") or None,
+        shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)

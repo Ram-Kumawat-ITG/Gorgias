@@ -24,7 +24,7 @@ async def crc_challenge(crc_token: str = Query(None)):
             db = get_db()
             if db is not None:
                 merchant = await db.merchants.find_one(
-                    {"twitter_api_secret": {"$exists": True, "$ne": ""}, "is_active": True}
+                    {"twitter_api_secret": {"$exists": True, "$ne": ""}, "is_active": {"$ne": False}}
                 )
                 if merchant:
                     consumer_secret = merchant.get("twitter_api_secret") or ""
