@@ -60,6 +60,8 @@ class TicketUpdate(BaseModel):
     tags: Optional[List[str]] = None
     subject: Optional[str] = None
     ticket_type: Optional[str] = None
+    sla_due_at: Optional[datetime] = None
+    sla_warning_at: Optional[datetime] = None
 
 
 class TicketInDB(BaseModel):
@@ -77,6 +79,7 @@ class TicketInDB(BaseModel):
     tags: List[str] = []
     sla_policy_id: Optional[str] = None
     sla_due_at: Optional[datetime] = None
+    sla_warning_at: Optional[datetime] = None
     sla_status: str = "ok"
     first_response_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None

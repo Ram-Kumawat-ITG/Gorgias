@@ -48,7 +48,7 @@ from app.routers import (
     tickets, customers, orders, returns,
     webhooks, email_inbound, ai, macros, automations,
     history, analytics, shopify, channels,
-    instagram, merchants, whatsapp,
+    instagram, merchants, whatsapp, sla,
 )
 from app.routers import media
 
@@ -68,4 +68,5 @@ app.include_router(channels.router)
 app.include_router(instagram.router)
 app.include_router(merchants.router)
 app.include_router(whatsapp.router)
+app.include_router(sla.router)
 app.include_router(media.router)

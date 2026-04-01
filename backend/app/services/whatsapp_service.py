@@ -194,6 +194,88 @@ async def download_media(media_id: str, config: dict) -> str:
         return ""
 
 
+async def send_interactive_buttons(
+    to_phone: str,
+    body_text: str,
+    buttons: list[dict],
+    image_url: str = "",
+    footer_text: str = "",
+    config: dict = None,
+) -> dict:
+    """Send a WhatsApp interactive reply-button message (max 3 buttons).
+
+    When image_url is provided it is sent as the message header image.
+    buttons format: [{"id": "btn_id", "title": "Button Label"}, ...]
+    Button title is capped at 20 chars; button id at 256 chars.
+    """
+    if not config:
+        return {"error": "no_config"}
+    phone_number_id = config.get("phone_number_id", "")
+    access_token = config.get("access_token", "")
+    if not phone_number_id or not access_token:
+        return {"error": "not_configured"}
+
+    # WhatsApp interactive body limit is 1 024 chars
+    if len(body_text) > 1024:
+        body_text = body_text[:1020] + "…"
+
+    to_phone_clean = to_phone.lstrip("+")
+
+    interactive: dict = {
+        "type": "button",
+        "body": {"text": body_text},
+        "action": {
+            "buttons": [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": btn["id"][:256],
+                        "title": btn["title"][:20],
+                    },
+                }
+                for btn in buttons[:3]
+            ]
+        },
+    }
+
+    if image_url:
+        interactive["header"] = {"type": "image", "image": {"link": image_url}}
+    if footer_text:
+        interactive["footer"] = {"text": footer_text[:60]}
+
+    url = f"{GRAPH_API_BASE}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_phone_clean,
+        "type": "interactive",
+        "interactive": interactive,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, json=payload, headers=headers, timeout=15.0)
+            try:
+                resp_body = r.json()
+            except Exception:
+                resp_body = {"raw": r.text}
+            if r.status_code >= 400:
+                err = resp_body.get("error", {})
+                print(
+                    f"[WhatsApp] Interactive send FAILED to={to_phone_clean} "
+                    f"status={r.status_code} error={err}"
+                )
+                return {"error": str(err), "status_code": r.status_code}
+            return resp_body
+    except Exception as e:
+        print(f"[WhatsApp] Interactive message network error: {e}")
+        return {"error": str(e)}
+
+
 async def mark_as_read(message_id: str, config: dict):
     """Send read receipt for a WhatsApp message."""
     phone_number_id = config["phone_number_id"]

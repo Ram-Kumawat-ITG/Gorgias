@@ -107,10 +107,12 @@ async def apply_sla_policy(ticket_doc: dict) -> dict:
         {"priority": ticket_doc["priority"], "is_active": True}
     )
     if policy:
+        now = datetime.utcnow()
+        resolution_hours = policy["resolution_hours"]
+        warning_hours = policy.get("warning_hours") or (resolution_hours * 0.75)
         ticket_doc["sla_policy_id"] = policy["id"]
-        ticket_doc["sla_due_at"] = datetime.utcnow() + timedelta(
-            hours=policy["resolution_hours"]
-        )
+        ticket_doc["sla_due_at"] = now + timedelta(hours=resolution_hours)
+        ticket_doc["sla_warning_at"] = now + timedelta(hours=warning_hours)
         ticket_doc["sla_status"] = "ok"
     return ticket_doc
 

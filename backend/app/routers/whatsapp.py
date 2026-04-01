@@ -182,6 +182,18 @@ async def _handle_messages(value: dict):
             body = "[Contact card received]"
         elif msg_type == "sticker":
             body = "[Sticker received]"
+        elif msg_type == "interactive":
+            interactive_data = msg.get("interactive", {})
+            if interactive_data.get("type") == "button_reply":
+                btn_reply = interactive_data.get("button_reply", {})
+                btn_title = btn_reply.get("title", "")
+                btn_id = btn_reply.get("id", "")
+                # Encode action context into body so AI understands with conversation history
+                # btn_id format: "cancel_<order_id>", "refund_<order_id>", etc.
+                _btn_action, _, _btn_ref = btn_id.partition("_")
+                body = btn_title + (f" (order {_btn_ref})" if _btn_ref else "")
+            else:
+                body = f"[Interactive message received]"
         else:
             body = f"[{msg_type} message received]"
 
@@ -200,6 +212,16 @@ async def _handle_messages(value: dict):
         except Exception:
             pass
 
+        # Detect brand-new users before ticket creation so we can send a one-time greeting.
+        # A user is "new" if they have no customer record yet, or if they have one but
+        # wa_greeted is False/missing (covers pre-existing data with no flag).
+        _existing_customer = await db.customers.find_one({"phone": from_phone})
+        if not _existing_customer:
+            _existing_customer = await db.customers.find_one(
+                {"email": f"{from_phone}@whatsapp.placeholder"}
+            )
+        _is_new_user = not _existing_customer or not _existing_customer.get("wa_greeted")
+
         # Create or update ticket via ticket_service
         from app.services.ticket_service import create_ticket_from_whatsapp
         ticket_doc = await create_ticket_from_whatsapp(
@@ -211,6 +233,43 @@ async def _handle_messages(value: dict):
             media_type=media_type,
             merchant_id=merchant_id,
         )
+
+        # One-time greeting for brand-new users.
+        # Sends the welcome message, persists it, marks the customer as greeted,
+        # then skips the AI reply so the bot waits for the user's next message.
+        if _is_new_user and body:
+            _GREETING = (
+                "Hey! 👋 Welcome! I'm Aria, your personal shopping assistant.\n\n"
+                "I can help you place orders, track shipments, cancel orders, "
+                "check product availability, and more.\n\n"
+                "What can I help you with today? 😊"
+            )
+            try:
+                from app.services.whatsapp_service import send_text_message as _send
+                from app.models.message import MessageInDB as _MsgInDB
+                _wa_cfg = await get_whatsapp_config(merchant_id)
+                _gr_result = await _send(from_phone, _GREETING, _wa_cfg)
+                _gr_msgs = _gr_result.get("messages") or []
+                _gr_sent_id = _gr_msgs[0].get("id") if _gr_msgs else None
+                _gr_doc = _MsgInDB(
+                    ticket_id=ticket_doc.get("id", ""),
+                    body=_GREETING,
+                    sender_type="agent",
+                    channel="whatsapp",
+                    ai_generated=True,
+                    whatsapp_message_id=_gr_sent_id,
+                    whatsapp_status="sent" if _gr_sent_id else "failed",
+                )
+                await db.messages.insert_one(_gr_doc.model_dump())
+            except Exception as _gr_err:
+                print(f"WhatsApp greeting send failed: {_gr_err}")
+            # Persist the flag — update by phone (set by create_ticket_from_whatsapp)
+            await db.customers.update_one(
+                {"phone": from_phone},
+                {"$set": {"wa_greeted": True}},
+            )
+            # Skip AI reply this turn — resume normal flow on user's next message
+            continue
 
         # Auto-reply via AI Sales Agent for every inbound customer message
         if body:

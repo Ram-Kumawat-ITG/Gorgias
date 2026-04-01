@@ -10,6 +10,7 @@ class SLAPolicyCreate(BaseModel):
     priority: str
     first_response_hours: float
     resolution_hours: float
+    warning_hours: Optional[float] = None  # hours from creation; defaults to 75% of resolution_hours
     applies_to_channels: List[str] = ["email", "manual"]
     is_active: bool = True
 
@@ -20,6 +21,7 @@ class SLAPolicyInDB(BaseModel):
     priority: str
     first_response_hours: float
     resolution_hours: float
+    warning_hours: Optional[float] = None  # hours from creation; defaults to 75% of resolution_hours
     applies_to_channels: List[str] = ["email", "manual"]
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
