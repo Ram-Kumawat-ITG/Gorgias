@@ -41,11 +41,11 @@ npm run preview
 
 ### Backend (`backend/app/`)
 
-- **Entry**: `main.py` — FastAPI app with lifespan hooks (`connect_db` → `start_sla_scheduler` on startup, `close_db` on shutdown), CORS, 18+ routers
+- **Entry**: `main.py` — FastAPI app with lifespan hooks (`connect_db` on startup, `close_db` + `close_shopify_client` on shutdown), CORS, 17 routers. The SLA scheduler was removed; no background jobs run at startup.
 - **Config**: `config.py` — Pydantic Settings from `.env`; `MONGODB_URL` and `SECRET_KEY` are required. CORS falls back to `localhost:5173/8000` if `CORS_ORIGINS` is unset — ensure this is set in production
 - **Database**: `database.py` — Motor (async MongoDB); `connect_db()` also creates all 20+ indexes. All DB access is async/await; `_id` fields are MongoDB `ObjectId` and must be converted to string before returning to clients (routers do `t["_id"] = str(t["_id"])` manually)
-- **Routers** (`routers/`): One file per domain — `tickets`, `customers`, `orders`, `returns`, `ai`, `macros`, `automations`, `sla`, `analytics`, `shopify`, `channels`, `email_inbound`, `instagram`, `whatsapp`, `twitter`, `merchants`, `history`, `webhooks`
-- **Services** (`services/`): Business logic — `ai_service.py` (OpenAI/Groq), `shopify_client.py` (REST), `shopify_sync.py`, `sla_worker.py` (APScheduler background job), `automation_engine.py`, `mailgun_service.py`, `whatsapp_service.py`, `instagram_service.py`, `instagram_sales_agent_service.py`, `twitter_service.py`
+- **Routers** (`routers/`): One file per domain — `tickets`, `customers`, `orders`, `returns`, `ai`, `macros`, `automations`, `analytics`, `shopify`, `channels`, `email_inbound`, `instagram`, `whatsapp`, `merchants`, `history`, `webhooks`, `media`. Note: `twitter` and `sla` router files exist on disk but are **not registered** in `main.py`.
+- **Services** (`services/`): Business logic — `ai_service.py` (OpenAI/Groq), `shopify_client.py` (REST), `shopify_sync.py`, `sla_worker.py` (APScheduler — not currently scheduled), `automation_engine.py`, `mailgun_service.py`, `whatsapp_service.py`, `instagram_service.py`, `instagram_sales_agent_service.py`, `twitter_service.py`
 - **Models** (`models/`): Pydantic v2 document models for MongoDB — no ORM, raw Motor queries
 - **Auth**: JWT via `python-jose` + `passlib[bcrypt]`; handled in `routers/auth.py`
 - **Middleware**: `middleware/shopify_hmac.py` — validates Shopify webhook signatures
@@ -82,7 +82,7 @@ npm run preview
 
 **Automation engine stops at first matching rule with `stop_processing: True`**: Rules are evaluated in priority order; when a rule matches and has `stop_processing`, subsequent rules are skipped even if earlier actions in that rule failed.
 
-**SLA worker is a background thread**: APScheduler runs `check_sla_breaches()` on a schedule. If MongoDB is unavailable, the function returns early silently (`if db is None: return`). No alerting exists for scheduler failures.
+**SLA worker exists but is not scheduled**: `sla_worker.py` contains `check_sla_breaches()` and the APScheduler setup, but the scheduler was removed from `main.py`'s lifespan. SLA breach detection does not run automatically; the `sla` router is also unregistered. If re-enabling, wire it back into the lifespan and re-register the router.
 
 **No ORM — raw Motor queries**: All queries use raw dicts. Schema changes require manual migration scripts. ObjectId vs string mismatches are a common source of bugs — routers consistently convert `_id` to string before response.
 

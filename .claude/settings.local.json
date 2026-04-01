@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Gorgias/shopify-helpdesk -name .env* -type f)",
+      "Bash(grep -E \"\\\\.js$|\\\\.config\")"
+    ]
+  }
+}

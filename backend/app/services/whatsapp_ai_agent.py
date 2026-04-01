@@ -493,6 +493,26 @@ async def process_whatsapp_message(
 
         # Execute Shopify operation; returns user-facing message
         reply = await _execute_action(result, customer_name, customer_phone)
+
+        # If the AI captured a real email this turn, sync it to MongoDB
+        result_email = (result.get("email") or "").strip()
+        if result_email and "@" in result_email and not result_email.endswith(".placeholder"):
+            from app.database import get_db
+            db = get_db()
+            if db is not None:
+                try:
+                    placeholder = f"{customer_phone}@whatsapp.placeholder"
+                    await db.customers.update_one(
+                        {"email": placeholder},
+                        {"$set": {"email": result_email}},
+                    )
+                    await db.tickets.update_one(
+                        {"id": ticket_id, "customer_email": placeholder},
+                        {"$set": {"customer_email": result_email}},
+                    )
+                except Exception:
+                    pass
+
         return reply or result.get("message") or None
 
     except json.JSONDecodeError:

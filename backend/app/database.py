@@ -44,7 +44,7 @@ async def create_indexes():
     await d.tickets.create_index([("status", 1), ("created_at", -1)])
     await d.tickets.create_index([("customer_email", 1)])
     await d.tickets.create_index([("assignee_id", 1), ("status", 1)])
-    # SLA tracking removed — no index on sla_due_at
+    await d.tickets.create_index([("sla_due_at", 1)])
     await d.tickets.create_index([("tags", 1)])
     await d.tickets.create_index([("ticket_type", 1), ("status", 1), ("created_at", -1)])
     await d.messages.create_index([("ticket_id", 1), ("created_at", 1)])

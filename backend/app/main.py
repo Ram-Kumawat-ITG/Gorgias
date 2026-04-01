@@ -4,15 +4,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import connect_db, close_db
 from app.config import settings
+from app.services.sla_worker import start_sla_scheduler, stop_sla_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await connect_db()
-    # SLA worker removed — no scheduled SLA checks
+    start_sla_scheduler()
     yield
     # Shutdown
+    stop_sla_scheduler()
     await close_db()
     from app.services.shopify_client import close_shopify_client
     await close_shopify_client()

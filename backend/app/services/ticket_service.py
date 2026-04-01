@@ -62,6 +62,18 @@ TICKET_TYPE_KEYWORDS = {
 }
 
 
+async def _get_admin_agent_id() -> str | None:
+    """Return the ID of the first active admin, falling back to any active agent."""
+    db = get_db()
+    try:
+        agent = await db.agents.find_one({"is_active": True, "role": "admin"})
+        if not agent:
+            agent = await db.agents.find_one({"is_active": True})
+        return agent["id"] if agent else None
+    except Exception:
+        return None
+
+
 async def _fetch_latest_order_snapshot(customer_email: str) -> dict:
     """Return the most recent order snapshot for a real customer email.
     Returns empty dict for placeholder emails (whatsapp/instagram/twitter) or if not found."""
@@ -138,6 +150,7 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         return existing
 
     order_snapshot = await _fetch_latest_order_snapshot(customer_email)
+    admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
         subject=subject,
         customer_email=customer_email,
@@ -146,6 +159,7 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         merchant_id=merchant_id,
         channel="email",
         ticket_type=classify_ticket_type(subject, body),
+        assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
         shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
@@ -263,6 +277,7 @@ async def create_ticket_from_whatsapp(
 
     # Create new ticket
     order_snapshot = await _fetch_latest_order_snapshot(customer_email)
+    admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
         subject=f"WhatsApp: {customer_name or phone}",
         customer_email=customer_email,
@@ -272,6 +287,7 @@ async def create_ticket_from_whatsapp(
         whatsapp_phone=phone,
         whatsapp_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"WhatsApp: {customer_name or phone}", message_body),
+        assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
         shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
@@ -374,6 +390,7 @@ async def create_ticket_from_instagram(
         return existing
 
     order_snapshot = await _fetch_latest_order_snapshot(placeholder_email)
+    admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
         subject=f"Instagram DM: {igsid}",
         customer_email=placeholder_email,
@@ -382,6 +399,7 @@ async def create_ticket_from_instagram(
         instagram_user_id=igsid,
         instagram_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"Instagram DM: {igsid}", message_body),
+        assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
         shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )
@@ -500,6 +518,7 @@ async def create_ticket_from_twitter(
     # Create new ticket
     type_label = "DM" if twitter_type == "dm" else "Mention"
     order_snapshot = await _fetch_latest_order_snapshot(placeholder_email)
+    admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
         subject=f"Twitter {type_label}: @{sender_handle or twitter_sender_id}",
         customer_email=placeholder_email,
@@ -513,6 +532,7 @@ async def create_ticket_from_twitter(
         ticket_type=classify_ticket_type(
             f"Twitter {type_label}: @{sender_handle}", message_body
         ),
+        assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
         shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
     )

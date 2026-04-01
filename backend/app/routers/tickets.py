@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models.ticket import TicketCreate, TicketUpdate, TicketInDB
 from app.models.message import MessageCreate, MessageInDB
 from app.services.shopify_sync import fetch_and_sync_customer
-from app.services.ticket_service import apply_sla_policy, classify_ticket_type
+from app.services.ticket_service import apply_sla_policy, classify_ticket_type, _get_admin_agent_id
 from app.services.activity_service import log_activity
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
@@ -63,6 +63,7 @@ async def create_ticket(data: TicketCreate, agent=Depends(get_current_agent)):
     db = get_db()
     customer = await fetch_and_sync_customer(data.customer_email)
 
+    admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
         subject=data.subject,
         customer_email=data.customer_email,
@@ -72,6 +73,7 @@ async def create_ticket(data: TicketCreate, agent=Depends(get_current_agent)):
         priority=data.priority.value if hasattr(data.priority, "value") else data.priority,
         tags=data.tags,
         ticket_type=classify_ticket_type(data.subject, data.initial_message or ""),
+        assignee_id=admin_id,
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)
