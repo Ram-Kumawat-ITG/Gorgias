@@ -55,4 +55,13 @@ export const customersApi = {
   update: (id, data) => api.patch(`/customers/${id}`, data),
 }
 
+export const slaPoliciesApi = {
+  list: ()           => api.get('/sla-policies'),
+  get: (id)          => api.get(`/sla-policies/${id}`),
+  create: (data)     => api.post('/sla-policies', data),
+  update: (id, data) => api.patch(`/sla-policies/${id}`, data),
+  delete: (id)       => api.delete(`/sla-policies/${id}`),
+  applyRetroactive:  () => api.post('/sla-policies/apply-retroactive'),
+}
+
 export default api;

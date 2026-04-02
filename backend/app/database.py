@@ -16,6 +16,7 @@ async def connect_db():
         db.client = AsyncIOMotorClient(
             settings.mongodb_url,
             serverSelectionTimeoutMS=5000,
+            tz_aware=True,
         )
         db.db = db.client[settings.mongodb_db_name]
         # Ping to verify the connection works

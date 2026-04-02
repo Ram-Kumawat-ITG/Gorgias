@@ -1,5 +1,5 @@
-# Ticket service — handles ticket creation from email, WhatsApp, and Instagram
-from datetime import datetime, timedelta, timezone
+# Ticket service — handles ticket creation from email and manual sources
+from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.ticket import TicketInDB
 from app.models.message import MessageInDB
@@ -76,7 +76,7 @@ async def _get_admin_agent_id() -> str | None:
 
 async def _fetch_latest_order_snapshot(customer_email: str) -> dict:
     """Return the most recent order snapshot for a real customer email.
-    Returns empty dict for placeholder emails (whatsapp/instagram) or if not found."""
+    Returns empty dict for placeholder emails (whatsapp/instagram/twitter) or if not found."""
     if not customer_email or customer_email.endswith(".placeholder"):
         return {}
     db = get_db()
@@ -102,43 +102,18 @@ def classify_ticket_type(subject: str, body: str = "") -> str:
 
 
 async def apply_sla_policy(ticket_doc: dict) -> dict:
-    """Assign an SLA policy to a ticket based on its priority and channel.
-
-    Lookup order:
-    1. Policy matching both priority AND channel (applies_to_channels contains the ticket channel).
-    2. Fallback: any active policy matching priority only (backwards compatibility).
-
-    Sets sla_due_at, sla_warning_at, first_response_due_at, and initial SLA statuses.
-    """
     db = get_db()
-    channel = ticket_doc.get("channel", "email")
-    priority = ticket_doc["priority"]
-
-    # 1. Try channel-specific match first
     policy = await db.sla_policies.find_one(
-        {"priority": priority, "is_active": True, "applies_to_channels": channel}
+        {"priority": ticket_doc["priority"], "is_active": True}
     )
-    # 2. Fallback to any active policy for this priority
-    if not policy:
-        policy = await db.sla_policies.find_one(
-            {"priority": priority, "is_active": True}
-        )
-
     if policy:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         resolution_hours = policy["resolution_hours"]
         warning_hours = policy.get("warning_hours") or (resolution_hours * 0.75)
-        first_response_hours = policy.get("first_response_hours")
-
         ticket_doc["sla_policy_id"] = policy["id"]
         ticket_doc["sla_due_at"] = now + timedelta(hours=resolution_hours)
         ticket_doc["sla_warning_at"] = now + timedelta(hours=warning_hours)
         ticket_doc["sla_status"] = "ok"
-
-        if first_response_hours:
-            ticket_doc["first_response_due_at"] = now + timedelta(hours=first_response_hours)
-            ticket_doc["first_response_sla_status"] = "pending"
-
     return ticket_doc
 
 
@@ -158,7 +133,7 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         )
         await db.messages.insert_one(msg.model_dump())
         await db.tickets.update_one(
-            {"id": existing["id"]}, {"$set": {"updated_at": datetime.now(timezone.utc)}}
+            {"id": existing["id"]}, {"$set": {"updated_at": datetime.utcnow()}}
         )
         await log_activity(
             entity_type="message",
@@ -277,8 +252,8 @@ async def create_ticket_from_whatsapp(
         # Re-classify ticket type on every new customer message
         new_type = classify_ticket_type(existing.get("subject", ""), message_body)
         ticket_updates = {
-            "updated_at": datetime.now(timezone.utc),
-            "whatsapp_last_customer_msg_at": datetime.now(timezone.utc),
+            "updated_at": datetime.utcnow(),
+            "whatsapp_last_customer_msg_at": datetime.utcnow(),
         }
         if new_type != "general" and new_type != existing.get("ticket_type"):
             ticket_updates["ticket_type"] = new_type
@@ -312,7 +287,7 @@ async def create_ticket_from_whatsapp(
         merchant_id=merchant_id,
         channel="whatsapp",
         whatsapp_phone=phone,
-        whatsapp_last_customer_msg_at=datetime.now(timezone.utc),
+        whatsapp_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"WhatsApp: {customer_name or phone}", message_body),
         assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
@@ -396,8 +371,8 @@ async def create_ticket_from_instagram(
         await db.tickets.update_one(
             {"id": existing["id"]},
             {"$set": {
-                "updated_at": datetime.now(timezone.utc),
-                "instagram_last_customer_msg_at": datetime.now(timezone.utc),
+                "updated_at": datetime.utcnow(),
+                "instagram_last_customer_msg_at": datetime.utcnow(),
             }},
         )
         await log_activity(
@@ -424,7 +399,7 @@ async def create_ticket_from_instagram(
         merchant_id=merchant_id,
         channel="instagram",
         instagram_user_id=igsid,
-        instagram_last_customer_msg_at=datetime.now(timezone.utc),
+        instagram_last_customer_msg_at=datetime.utcnow(),
         ticket_type=classify_ticket_type(f"Instagram DM: {igsid}", message_body),
         assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
@@ -452,6 +427,139 @@ async def create_ticket_from_instagram(
         event="ticket.created",
         actor_type="customer",
         description=f"Ticket created via Instagram DM from {igsid}",
+        customer_email=placeholder_email,
+    )
+
+    try:
+        from app.services.automation_engine import evaluate_automations
+        await evaluate_automations("ticket.created", ticket_doc)
+    except Exception:
+        pass
+
+    ticket_doc.pop("_id", None)
+    return ticket_doc
+
+
+async def create_ticket_from_twitter(
+    twitter_sender_id: str,
+    sender_name: str,
+    sender_handle: str,
+    message_body: str,
+    tw_message_id: str = None,
+    twitter_type: str = "dm",  # "dm" or "mention"
+    media_url: str = "",
+    media_type: str = "",
+    merchant_id: str = None,
+) -> dict:
+    """Create a new ticket or append to existing one from a Twitter DM or @mention."""
+    db = get_db()
+
+    placeholder_email = f"{twitter_sender_id}@twitter.placeholder"
+
+    # Find or create customer by Twitter sender ID
+    customer = await db.customers.find_one({"email": placeholder_email})
+    if not customer:
+        from app.models.customer import CustomerInDB
+        customer = CustomerInDB(
+            email=placeholder_email,
+            first_name=sender_name or f"@{sender_handle}" or twitter_sender_id,
+        ).model_dump()
+        try:
+            await db.customers.insert_one(customer)
+        except Exception:
+            customer = await db.customers.find_one({"email": placeholder_email})
+
+    # Check for existing open Twitter ticket from this sender + type
+    existing = await db.tickets.find_one(
+        {
+            "twitter_sender_id": twitter_sender_id,
+            "channel": "twitter",
+            "twitter_type": twitter_type,
+            "status": {"$in": ["open", "pending"]},
+        }
+    )
+
+    if existing:
+        msg = MessageInDB(
+            ticket_id=existing["id"],
+            body=message_body,
+            sender_type="customer",
+            channel="twitter",
+            twitter_message_id=tw_message_id,
+            twitter_type=twitter_type,
+            twitter_media_url=media_url if media_url else None,
+            twitter_media_type=media_type if media_type else None,
+        )
+        await db.messages.insert_one(msg.model_dump())
+
+        new_type = classify_ticket_type(existing.get("subject", ""), message_body)
+        ticket_updates = {
+            "updated_at": datetime.utcnow(),
+            "twitter_last_tweet_id": tw_message_id,
+        }
+        if new_type != "general" and new_type != existing.get("ticket_type"):
+            ticket_updates["ticket_type"] = new_type
+        await db.tickets.update_one({"id": existing["id"]}, {"$set": ticket_updates})
+
+        await log_activity(
+            entity_type="message",
+            entity_id=msg.id,
+            event="message.received",
+            actor_type="customer",
+            description=f"Twitter {twitter_type} from @{sender_handle}",
+            customer_email=placeholder_email,
+        )
+        try:
+            from app.services.automation_engine import evaluate_automations
+            await evaluate_automations("message.received", existing, msg.model_dump())
+        except Exception:
+            pass
+        existing["_id"] = str(existing["_id"])
+        return existing
+
+    # Create new ticket
+    type_label = "DM" if twitter_type == "dm" else "Mention"
+    order_snapshot = await _fetch_latest_order_snapshot(placeholder_email)
+    admin_id = await _get_admin_agent_id()
+    ticket = TicketInDB(
+        subject=f"Twitter {type_label}: @{sender_handle or twitter_sender_id}",
+        customer_email=placeholder_email,
+        customer_name=sender_name or f"@{sender_handle}" or None,
+        merchant_id=merchant_id,
+        channel="twitter",
+        twitter_sender_id=twitter_sender_id,
+        twitter_username=sender_handle,
+        twitter_type=twitter_type,
+        twitter_last_tweet_id=tw_message_id,
+        ticket_type=classify_ticket_type(
+            f"Twitter {type_label}: @{sender_handle}", message_body
+        ),
+        assignee_id=admin_id,
+        shopify_order_id=order_snapshot.get("shopify_order_id") or None,
+        shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
+    )
+    ticket_doc = ticket.model_dump()
+    ticket_doc = await apply_sla_policy(ticket_doc)
+    await db.tickets.insert_one(ticket_doc)
+
+    msg = MessageInDB(
+        ticket_id=ticket.id,
+        body=message_body,
+        sender_type="customer",
+        channel="twitter",
+        twitter_message_id=tw_message_id,
+        twitter_type=twitter_type,
+        twitter_media_url=media_url if media_url else None,
+        twitter_media_type=media_type if media_type else None,
+    )
+    await db.messages.insert_one(msg.model_dump())
+
+    await log_activity(
+        entity_type="ticket",
+        entity_id=ticket.id,
+        event="ticket.created",
+        actor_type="customer",
+        description=f"Ticket created via Twitter {type_label} from @{sender_handle}",
         customer_email=placeholder_email,
     )
 

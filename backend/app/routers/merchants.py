@@ -1,6 +1,6 @@
 # Merchant router — CRUD for managing merchant email and Shopify configurations
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from app.routers.auth import get_current_agent
 from app.database import get_db
 from app.models.merchant import MerchantCreate, MerchantUpdate, MerchantInDB
@@ -40,7 +40,7 @@ async def update_merchant(merchant_id: str, data: MerchantUpdate, agent=Depends(
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
     updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
-    updates["updated_at"] = datetime.utcnow()
+    updates["updated_at"] = datetime.now(timezone.utc)
     await db.merchants.update_one({"id": merchant_id}, {"$set": updates})
     updated = await db.merchants.find_one({"id": merchant_id})
     updated["_id"] = str(updated["_id"])

@@ -1,6 +1,6 @@
 # History router — activity timeline for customers, tickets, orders, and messages
 from fastapi import APIRouter, Depends, Query
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.routers.auth import get_current_agent
 from app.database import get_db
 
@@ -16,7 +16,7 @@ async def customer_history(
     agent=Depends(get_current_agent),
 ):
     db = get_db()
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     query = {"customer_email": email, "created_at": {"$gte": since}}
 
     if event_types:

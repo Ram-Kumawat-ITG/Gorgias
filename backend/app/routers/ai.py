@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from app.routers.auth import get_current_agent
 from app.services.ai_service import generate_reply_suggestion
 from app.services.ai_agent_service import analyze_conversation
@@ -134,10 +134,21 @@ async def process_ticket(ticket_id: str, agent=Depends(get_current_agent)):
         )
         await db.messages.insert_one(reply_msg.model_dump())
 
-        # Update ticket timestamp
+        # Update ticket — stamp first_response_at if this is the first agent reply
+        now = datetime.now(timezone.utc)
+        ticket_updates = {"updated_at": now}
+
+        if not ticket.get("first_response_at"):
+            ticket_updates["first_response_at"] = now
+            first_response_due = ticket.get("first_response_due_at")
+            if first_response_due:
+                ticket_updates["first_response_sla_status"] = "met" if now <= first_response_due else "breached"
+            else:
+                ticket_updates["first_response_sla_status"] = "met"
+
         await db.tickets.update_one(
             {"id": ticket_id},
-            {"$set": {"updated_at": datetime.utcnow()}},
+            {"$set": ticket_updates},
         )
 
         return {

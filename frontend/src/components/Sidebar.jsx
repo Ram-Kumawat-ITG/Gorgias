@@ -48,6 +48,7 @@ const NAV_ITEMS = [
   { to: '/returns', icon: RotateCcw, label: 'Returns' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/sla', icon: Shield, label: 'SLA' },
+  { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
   { to: '/requests', icon: FileText, label: 'Requests' },

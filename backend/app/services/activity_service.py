@@ -1,7 +1,7 @@
 # Activity logging service — records every meaningful state change to activity_logs
 from app.database import get_db
 from app.models.activity_log import ActivityLog
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 async def log_activity(
@@ -26,6 +26,6 @@ async def log_activity(
         actor_name=actor_name,
         description=description,
         metadata=metadata,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     await db.activity_logs.insert_one(log.model_dump())

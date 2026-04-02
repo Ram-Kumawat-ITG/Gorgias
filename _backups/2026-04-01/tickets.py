@@ -1,6 +1,6 @@
 # Ticket management router — CRUD operations for support tickets
 from fastapi import APIRouter, Depends, HTTPException, Query
-from datetime import datetime, timezone
+from datetime import datetime
 from app.routers.auth import get_current_agent
 from app.database import get_db
 from app.models.ticket import TicketCreate, TicketUpdate, TicketInDB
@@ -142,119 +142,13 @@ async def update_ticket(ticket_id: str, data: TicketUpdate, agent=Depends(get_cu
         ticket["_id"] = str(ticket["_id"])
         return ticket
 
-    updates["updated_at"] = datetime.now(timezone.utc)
+    updates["updated_at"] = datetime.utcnow()
 
     if "status" in updates:
         old_status = ticket.get("status")
         new_status = updates["status"]
-
-        # ── Ticket resolved ───────────────────────────────────────────────────
         if new_status == "resolved" and old_status != "resolved":
             updates["resolved_at"] = datetime.utcnow()
-
-            # If this is a cancel_requested ticket, trigger Shopify order cancellation
-            if ticket.get("ticket_type") == "cancel_requested" and ticket.get("cancel_requested_order_id"):
-                try:
-                    from app.services.order_service import cancel_order
-                    order_id = ticket["cancel_requested_order_id"]
-                    cancel_result = await cancel_order(order_id)
-                    if cancel_result:
-                        await log_activity(
-                            entity_type="order",
-                            entity_id=order_id,
-                            event="order.cancelled",
-                            actor_type="agent",
-                            actor_id=agent["id"],
-                            actor_name=agent["full_name"],
-                            description=f"Order {order_id} cancelled via Shopify (ticket resolved)",
-                            customer_email=ticket.get("customer_email"),
-                        )
-                        # Notify customer about successful cancellation
-                        customer_email = ticket.get("customer_email", "")
-                        channel = ticket.get("channel", "email")
-                        cancel_notify_msg = (
-                            "Your order has been successfully cancelled. "
-                            "If you have any questions, feel free to reach out to us."
-                        )
-                        if channel == "whatsapp":
-                            cancel_notify_msg = (
-                                "Your order has been successfully cancelled. ✅\n"
-                                "If you need anything else, feel free to reach out! 🙏"
-                            )
-                            try:
-                                from app.services.whatsapp_service import get_whatsapp_config, send_text_message as wa_send
-                                wa_phone = ticket.get("whatsapp_phone")
-                                if wa_phone:
-                                    wa_cfg = await get_whatsapp_config(ticket.get("merchant_id"))
-                                    await wa_send(wa_phone, cancel_notify_msg, wa_cfg)
-                            except Exception as e:
-                                print(f"WhatsApp cancel notification error: {e}")
-                        elif channel == "instagram":
-                            cancel_notify_msg = (
-                                "Your order has been successfully cancelled! ✅ "
-                                "Let us know if you need anything else."
-                            )
-                            try:
-                                from app.services.instagram_service import get_instagram_config, send_text_message as ig_send
-                                ig_user_id = ticket.get("instagram_user_id")
-                                if ig_user_id:
-                                    ig_cfg = await get_instagram_config(ticket.get("merchant_id"))
-                                    await ig_send(ig_user_id, cancel_notify_msg, ig_cfg)
-                            except Exception as e:
-                                print(f"Instagram cancel notification error: {e}")
-                        else:  # email
-                            try:
-                                from app.services.mailgun_service import send_reply_email
-                                await send_reply_email(
-                                    to=customer_email,
-                                    subject=f"Re: {ticket.get('subject', 'Order Cancellation')}",
-                                    body=cancel_notify_msg,
-                                    ticket_id=ticket_id,
-                                )
-                            except Exception as e:
-                                print(f"Email cancel notification error: {e}")
-
-                        # Save notification as message in ticket thread
-                        notify_msg = MessageInDB(
-                            ticket_id=ticket_id,
-                            body=cancel_notify_msg,
-                            sender_type="agent",
-                            channel=channel,
-                        )
-                        await db.messages.insert_one(notify_msg.model_dump())
-                    else:
-                        print(f"Failed to cancel order {order_id} on Shopify")
-                except Exception as e:
-                    print(f"Order cancellation on ticket resolve error: {e}")
-            now = datetime.now(timezone.utc)
-            updates["resolved_at"] = now
-
-            # Mark resolution SLA as met if resolved before the deadline
-            sla_due = ticket.get("sla_due_at")
-            current_sla_status = ticket.get("sla_status", "ok")
-            if sla_due and now <= sla_due and current_sla_status != "breached":
-                updates["sla_status"] = "met"
-
-            # Mark first response SLA as met if agent did reply at some point
-            if ticket.get("first_response_at") and ticket.get("first_response_sla_status") == "pending":
-                updates["first_response_sla_status"] = "met"
-
-        # ── Ticket reopened ───────────────────────────────────────────────────
-        if old_status in ("resolved", "closed") and new_status in ("open", "pending", "in_progress"):
-            # Build a minimal ticket doc to recalculate SLA from now
-            merged = {**ticket, **updates}
-            merged = await apply_sla_policy(merged)
-            # Pull only the SLA fields from the recalculated doc
-            for sla_field in (
-                "sla_policy_id", "sla_due_at", "sla_warning_at", "sla_status",
-                "first_response_due_at",
-            ):
-                if sla_field in merged:
-                    updates[sla_field] = merged[sla_field]
-            # Only reset first_response_sla_status if the agent hasn't responded yet
-            if not ticket.get("first_response_at"):
-                updates["first_response_sla_status"] = merged.get("first_response_sla_status", "pending")
-
         if old_status != new_status:
             await log_activity(
                 entity_type="ticket",
@@ -328,23 +222,10 @@ async def add_message(ticket_id: str, data: MessageCreate, agent=Depends(get_cur
     )
     await db.messages.insert_one(msg.model_dump())
 
-    ticket_updates = {"updated_at": datetime.now(timezone.utc)}
-
+    ticket_updates = {"updated_at": datetime.utcnow()}
     if data.sender_type == "agent" and not data.is_internal_note and not ticket.get("first_response_at"):
-        now = datetime.now(timezone.utc)
-        ticket_updates["first_response_at"] = now
+        ticket_updates["first_response_at"] = datetime.utcnow()
         ticket_updates["status"] = "pending"
-
-        # Determine whether the first response SLA was met or missed
-        first_response_due = ticket.get("first_response_due_at")
-        if first_response_due:
-            if now <= first_response_due:
-                ticket_updates["first_response_sla_status"] = "met"
-            else:
-                ticket_updates["first_response_sla_status"] = "breached"
-        else:
-            # No deadline was set — treat as met
-            ticket_updates["first_response_sla_status"] = "met"
 
     await db.tickets.update_one({"id": ticket_id}, {"$set": ticket_updates})
 
@@ -398,6 +279,38 @@ async def add_message(ticket_id: str, data: MessageCreate, agent=Depends(get_cur
                     {"id": msg.id},
                     {"$set": {"whatsapp_status": "failed"}},
                 )
+        elif channel == "twitter":
+            try:
+                from app.services.twitter_service import (
+                    get_twitter_config,
+                    send_dm,
+                    reply_to_tweet,
+                )
+                config = await get_twitter_config(ticket.get("merchant_id"))
+                twitter_sender_id = ticket.get("twitter_sender_id")
+                twitter_type = ticket.get("twitter_type", "dm")
+                if twitter_sender_id:
+                    if twitter_type == "dm":
+                        result = await send_dm(twitter_sender_id, data.body, config)
+                        tw_msg_id = result.get("data", {}).get("dm_conversation_id", "")
+                    else:
+                        # mention — reply to the last tweet in this thread
+                        last_tweet_id = ticket.get("twitter_last_tweet_id", "")
+                        result = await reply_to_tweet(last_tweet_id, data.body, config)
+                        tw_msg_id = result.get("data", {}).get("id", "")
+                    tw_status = "sent" if "error" not in result else "failed"
+                    if tw_msg_id or tw_status == "sent":
+                        await db.messages.update_one(
+                            {"id": msg.id},
+                            {"$set": {
+                                "twitter_message_id": tw_msg_id,
+                                "twitter_status": tw_status,
+                                "twitter_type": twitter_type,
+                                "channel": "twitter",
+                            }},
+                        )
+            except Exception as e:
+                print(f"Twitter send error: {e}")
         elif channel == "instagram":
             try:
                 from app.services.instagram_service import (

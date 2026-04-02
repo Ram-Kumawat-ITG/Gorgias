@@ -2,7 +2,7 @@
 import hashlib
 import hmac
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.config import settings
 from app.database import get_db
 
@@ -96,4 +96,4 @@ def is_within_24h_window(last_customer_msg_at: datetime) -> bool:
     """Check if we're still within the 24-hour free-form messaging window."""
     if not last_customer_msg_at:
         return False
-    return datetime.utcnow() - last_customer_msg_at < timedelta(hours=24)
+    return datetime.now(timezone.utc) - last_customer_msg_at < timedelta(hours=24)

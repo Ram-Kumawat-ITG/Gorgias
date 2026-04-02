@@ -19,6 +19,7 @@ import InstagramSettingsPage from './pages/InstagramSettingsPage';
 import EmailSettingsPage from './pages/EmailSettingsPage';
 import SLAPage from './pages/SLAPage';
 import GiftCardPage from './pages/GiftCardPage';
+import SLAPoliciesPage from './pages/SLAPoliciesPage';
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/automations" element={<AutomationsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/sla" element={<SLAPage />} />
+        <Route path="/sla-policies" element={<SLAPoliciesPage />} />
         <Route path="/requests" element={<RequestPage />} />
         <Route path="/gift-cards" element={<GiftCardPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />

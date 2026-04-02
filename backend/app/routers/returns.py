@@ -1,6 +1,6 @@
 # Returns router — custom return management with tags, tracking, resolution automation
 from fastapi import APIRouter, Depends, Query, HTTPException
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.routers.auth import get_current_agent
 from app.database import get_db
 from app.services.shopify_client import shopify_get, ShopifyAPIError
@@ -62,7 +62,7 @@ async def list_returns(
     if resolution:
         query["resolution"] = resolution
     if days > 0:
-        query["created_at"] = {"$gte": datetime.utcnow() - timedelta(days=days)}
+        query["created_at"] = {"$gte": datetime.now(timezone.utc) - timedelta(days=days)}
     total = await db.returns.count_documents(query)
     skip = (page - 1) * limit
     returns = await db.returns.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -167,7 +167,7 @@ async def create_return(data: ReturnCreate, agent=Depends(get_current_agent)):
         resolution=data.resolution, return_tag=tag,
         images=data.images or [],
         status_history=[{
-            "status": "requested", "timestamp": datetime.utcnow(),
+            "status": "requested", "timestamp": datetime.now(timezone.utc),
             "actor_type": "admin", "actor_id": agent["id"],
             "actor_name": agent.get("full_name", ""), "note": "Return created by admin",
         }],
@@ -220,7 +220,7 @@ async def create_return_customer(data: ReturnCreate):
         resolution=data.resolution, return_tag=tag,
         images=data.images or [],
         status_history=[{
-            "status": "requested", "timestamp": datetime.utcnow(),
+            "status": "requested", "timestamp": datetime.now(timezone.utc),
             "actor_type": "customer", "note": "Return created by customer",
         }],
         initiated_by="customer",
@@ -252,12 +252,12 @@ async def update_return_status(return_id: str, data: ReturnStatusUpdate, agent=D
 
     tag = get_tag_for_status(new_status, ret.get("resolution", ""))
     status_entry = {
-        "status": new_status, "timestamp": datetime.utcnow(),
+        "status": new_status, "timestamp": datetime.now(timezone.utc),
         "actor_type": "admin", "actor_id": agent["id"],
         "actor_name": agent.get("full_name", ""),
         "note": data.note or f"Status → {new_status}",
     }
-    updates = {"status": new_status, "return_tag": tag, "updated_at": datetime.utcnow()}
+    updates = {"status": new_status, "return_tag": tag, "updated_at": datetime.now(timezone.utc)}
 
     await db.returns.update_one(
         {"id": return_id},
@@ -295,7 +295,7 @@ async def add_tracking(return_id: str, data: ReturnTrackingUpdate, agent=Depends
         "tracking_number": data.tracking_number,
         "courier": data.courier,
         "tracking_status": "pending",
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
 
     # Auto-transition to shipped if still approved
@@ -304,7 +304,7 @@ async def add_tracking(return_id: str, data: ReturnTrackingUpdate, agent=Depends
         updates["status"] = "shipped"
         updates["return_tag"] = tag
         status_entry = {
-            "status": "shipped", "timestamp": datetime.utcnow(),
+            "status": "shipped", "timestamp": datetime.now(timezone.utc),
             "actor_type": "admin", "actor_id": agent["id"],
             "actor_name": agent.get("full_name", ""),
             "note": f"Tracking added: {data.courier} #{data.tracking_number}",
@@ -345,7 +345,7 @@ async def check_tracking(return_id: str, agent=Depends(get_current_agent)):
 
     await db.returns.update_one(
         {"id": return_id},
-        {"$set": {"tracking_last_checked": datetime.utcnow()}},
+        {"$set": {"tracking_last_checked": datetime.now(timezone.utc)}},
     )
     return {
         "tracking_number": ret.get("tracking_number"),
@@ -368,14 +368,14 @@ async def cancel_return(return_id: str, agent=Depends(get_current_agent)):
         raise HTTPException(status_code=400, detail="Return is already cancelled/rejected")
 
     status_entry = {
-        "status": "cancelled", "timestamp": datetime.utcnow(),
+        "status": "cancelled", "timestamp": datetime.now(timezone.utc),
         "actor_type": "admin", "actor_id": agent["id"],
         "actor_name": agent.get("full_name", ""),
         "note": "Return cancelled",
     }
     await db.returns.update_one(
         {"id": return_id},
-        {"$set": {"status": "cancelled", "return_tag": "", "updated_at": datetime.utcnow()},
+        {"$set": {"status": "cancelled", "return_tag": "", "updated_at": datetime.now(timezone.utc)},
          "$push": {"status_history": status_entry}},
     )
     # Remove return tag from order

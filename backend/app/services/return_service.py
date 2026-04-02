@@ -1,5 +1,5 @@
 # Return service — tag management, resolution automation, tracking helpers
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.services.shopify_client import shopify_get, shopify_post, shopify_put, ShopifyAPIError
 from app.services.activity_service import log_activity
@@ -55,9 +55,9 @@ async def process_resolution(return_doc: dict) -> dict:
             result = await _process_refund(order_id, return_doc.get("items", []))
             tag = get_tag_for_status("resolved", "refund")
             updates = {
-                "status": "resolved", "resolved_at": datetime.utcnow(),
+                "status": "resolved", "resolved_at": datetime.now(timezone.utc),
                 "refund_id": result.get("refund_id"), "return_tag": tag,
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             }
             note = f"Refund processed. ID: {result.get('refund_id', 'N/A')}"
 
@@ -75,9 +75,9 @@ async def process_resolution(return_doc: dict) -> dict:
 
             tag = get_tag_for_status("resolved", "replacement")
             updates = {
-                "status": "resolved", "resolved_at": datetime.utcnow(),
+                "status": "resolved", "resolved_at": datetime.now(timezone.utc),
                 "replacement_order_id": result.get("order_id"), "return_tag": tag,
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             }
             note = f"Replacement order created. ID: {result.get('order_id', 'N/A')}"
         else:
@@ -85,7 +85,7 @@ async def process_resolution(return_doc: dict) -> dict:
 
         # Update return record
         status_entry = {
-            "status": "resolved", "timestamp": datetime.utcnow(),
+            "status": "resolved", "timestamp": datetime.now(timezone.utc),
             "actor_type": "system", "note": note,
         }
         await db.returns.update_one(
@@ -109,7 +109,7 @@ async def process_resolution(return_doc: dict) -> dict:
         await db.returns.update_one(
             {"id": return_id},
             {"$push": {"status_history": {
-                "status": "received", "timestamp": datetime.utcnow(),
+                "status": "received", "timestamp": datetime.now(timezone.utc),
                 "actor_type": "system", "note": error_note,
             }}},
         )

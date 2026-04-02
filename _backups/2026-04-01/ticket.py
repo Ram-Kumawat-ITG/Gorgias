@@ -29,7 +29,6 @@ class TicketType(str, Enum):
     BILLING = "billing"
     PRODUCT_INQUIRY = "product_inquiry"
     TECHNICAL = "technical"
-    CANCEL_REQUESTED = "cancel_requested"
     GENERAL = "general"
 
 
@@ -40,6 +39,7 @@ class TicketChannel(str, Enum):
     WHATSAPP = "whatsapp"
     CHAT = "chat"
     INSTAGRAM = "instagram"
+    TWITTER = "twitter"
 
 
 class TicketCreate(BaseModel):
@@ -62,7 +62,6 @@ class TicketUpdate(BaseModel):
     ticket_type: Optional[str] = None
     sla_due_at: Optional[datetime] = None
     sla_warning_at: Optional[datetime] = None
-    first_response_due_at: Optional[datetime] = None
 
 
 class TicketInDB(BaseModel):
@@ -78,14 +77,10 @@ class TicketInDB(BaseModel):
     ticket_type: str = "general"
     assignee_id: Optional[str] = None
     tags: List[str] = []
-    # SLA fields
     sla_policy_id: Optional[str] = None
     sla_due_at: Optional[datetime] = None
     sla_warning_at: Optional[datetime] = None
-    sla_status: str = "ok"                          # ok | warning | breached | met
-    first_response_due_at: Optional[datetime] = None
-    first_response_sla_status: str = "pending"      # pending | met | breached
-    # Response tracking
+    sla_status: str = "ok"
     first_response_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
     # WhatsApp-specific fields
@@ -93,16 +88,16 @@ class TicketInDB(BaseModel):
     whatsapp_conversation_id: Optional[str] = None
     whatsapp_last_customer_msg_at: Optional[datetime] = None  # tracks 24-hour window
     # Instagram-specific fields
-    instagram_user_id: Optional[str] = None         # sender's IGSID
-    instagram_username: Optional[str] = None        # display name
+    instagram_user_id: Optional[str] = None  # sender's IGSID
+    instagram_username: Optional[str] = None  # display name
     instagram_last_customer_msg_at: Optional[datetime] = None  # tracks 24-hour window
+    # Twitter-specific fields
+    twitter_sender_id: Optional[str] = None  # Twitter user ID of the customer
+    twitter_username: Optional[str] = None   # @handle of the customer
+    twitter_type: Optional[str] = None       # "dm" or "mention"
+    twitter_last_tweet_id: Optional[str] = None  # last tweet/DM id for threading
     # Shopify order link (latest order at ticket creation time)
     shopify_order_id: Optional[str] = None
     shopify_order_number: Optional[str] = None
-    # Cancel retention fields
-    retention_offered: bool = False
-    retention_accepted: Optional[bool] = None
-    retention_offered_at: Optional[datetime] = None
-    cancel_requested_order_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -313,6 +313,21 @@ async def _handle_messages(value: dict):
                             whatsapp_status=wa_status,
                         )
                         await db.messages.insert_one(reply_msg.model_dump())
+
+                        # Stamp first_response_at if this is the first agent reply
+                        if not ticket_doc.get("first_response_at"):
+                            from datetime import datetime, timezone
+                            now = datetime.now(timezone.utc)
+                            ticket_updates = {"first_response_at": now, "updated_at": now}
+                            first_response_due = ticket_doc.get("first_response_due_at")
+                            if first_response_due:
+                                ticket_updates["first_response_sla_status"] = "met" if now <= first_response_due else "breached"
+                            else:
+                                ticket_updates["first_response_sla_status"] = "met"
+                            await db.tickets.update_one(
+                                {"id": ticket_id},
+                                {"$set": ticket_updates},
+                            )
             except Exception as _ai_err:
                 print(f"WhatsApp AI agent auto-reply failed: {_ai_err}")
 

@@ -1,5 +1,5 @@
 # Shopify data sync — fetches customer + order data from Shopify and caches in MongoDB
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.services.shopify_client import shopify_get
 from app.models.customer import CustomerInDB
@@ -24,7 +24,7 @@ async def fetch_and_sync_customer(email: str, force_refresh: bool = False) -> di
             set_doc = {k: v for k, v in doc.items() if k != "created_at"}
             await db.customers.update_one(
                 {"email": email},
-                {"$set": set_doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+                {"$set": set_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
                 upsert=True,
             )
             doc.pop("_id", None)
@@ -45,7 +45,7 @@ async def fetch_and_sync_customer(email: str, force_refresh: bool = False) -> di
         set_doc = {k: v for k, v in doc.items() if k != "created_at"}
         await db.customers.update_one(
             {"email": email},
-            {"$set": set_doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+            {"$set": set_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
             upsert=True,
         )
         doc.pop("_id", None)
@@ -61,7 +61,7 @@ async def fetch_and_sync_customer(email: str, force_refresh: bool = False) -> di
         set_doc = {k: v for k, v in doc.items() if k != "created_at"}
         await db.customers.update_one(
             {"email": email},
-            {"$set": set_doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+            {"$set": set_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
             upsert=True,
         )
         doc.pop("_id", None)
@@ -152,11 +152,11 @@ async def fetch_all_shopify_customers(limit: int = 50, since_id: str = None) -> 
                 "orders_count": sc.get("orders_count", 0),
                 "tags": sc.get("tags", "").split(", ") if sc.get("tags") else [],
                 "notes": sc.get("note"),
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             }
             await db.customers.update_one(
                 {"email": email},
-                {"$set": doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+                {"$set": doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
                 upsert=True,
             )
             doc["shopify_created_at"] = sc.get("created_at")

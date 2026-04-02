@@ -1,7 +1,7 @@
 # Analytics router — aggregated metrics for the dashboard
 import asyncio
 from fastapi import APIRouter, Depends, Query
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.routers.auth import get_current_agent
 from app.database import get_db
 
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 @router.get("/overview")
 async def analytics_overview(days: int = Query(30, ge=1, le=365), agent=Depends(get_current_agent)):
     db = get_db()
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     async def tickets_by_status():
         pipeline = [
