@@ -163,7 +163,7 @@ function validateForm() {
         <h3 className="text-sm font-medium text-blue-900 mb-2">Setup Guide</h3>
         <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
           <li>Create a Meta Business App at <span className="font-medium">developers.facebook.com</span></li>
-          <li>Add the WhatsApp product to your app</li>
+          <li>Add the WhatsApp product to your app.</li>
           <li>Add a phone number to your WhatsApp Business Account</li>
           <li>Generate a permanent System User Access Token</li>
           <li>Enter your credentials below and save</li>
