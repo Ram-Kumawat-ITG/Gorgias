@@ -6,7 +6,8 @@
       "Bash(find /c/Gorgias/shopify-helpdesk/frontend -type f \\\\\\(-name *instagram* -o -name *Instagram* \\\\\\))",
       "Bash(python -c \":*)",
       "Bash(npx -y acorn-jsx --ecma2020 src/pages/GiftCardPage.jsx)",
-      "Bash(venv/Scripts/python -c \":*)"
+      "Bash(venv/Scripts/python -c \":*)",
+      "Bash(grep -n 'pending_admin\\\\|$in.*open\\\\|open.*pending' app/services/ticket_service.py app/routers/tickets.py)"
     ]
   }
 }

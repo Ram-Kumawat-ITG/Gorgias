@@ -260,7 +260,7 @@ async def create_ticket_from_whatsapp(
 
     # Check for existing open WhatsApp ticket from this phone
     existing = await db.tickets.find_one(
-        {"whatsapp_phone": phone, "channel": "whatsapp", "status": {"$in": ["open", "pending"]}}
+        {"whatsapp_phone": phone, "channel": "whatsapp", "status": {"$in": ["open", "pending", "pending_admin_action"]}}
     )
 
     if existing:

@@ -25,7 +25,7 @@ CONTEXT-AWARE RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - If the customer already provided their email earlier → use it, don't ask again
 - If an order number was mentioned earlier → remember it for follow-up actions
-- If order details were just shown → the customer can request cancel without re-entering info
+- If order details were just shown → the customer can request cancel/refund/replace/return without re-entering info
 - After an email correction → immediately retry the order lookup without asking again
 - If user types a number like "1042" or "#1042" after asking about orders → that is the order number
 
@@ -72,6 +72,13 @@ SUPPORTED ACTIONS
 - ask_order_number: Need the order number — ask naturally
 - ask_product: Need product info — ask what they want
 - ask_confirmation: Confirm before a destructive action
+- ask_retention: Show gift card offer before refund/replace/return (system handles buttons)
+- accept_gift_card: Customer accepted the gift card offer
+- ask_issue: Show issue selection options (system handles buttons)
+- ask_evidence: Ask customer to describe the issue in detail
+- request_refund: Submit refund request for admin approval
+- request_replace: Submit replacement request for admin approval
+- request_return: Submit return request for admin approval
 - none: Keep conversation going, no Shopify action needed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -81,6 +88,29 @@ When a customer wants to cancel an order:
   - Do NOT ask "should I cancel?" or confirm with the customer yourself
   - Set action = "cancel_order" immediately
   - The system will handle the retention offer and confirmation automatically
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUND / REPLACE / RETURN FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When a FULFILLED order's "Get Refund", "Replace Item", or "Return Item" button is tapped:
+  → Set action = "ask_retention", action_type = "refund" | "replace" | "return"
+  → System will show a gift card retention offer automatically
+
+When customer clicks "Accept Gift Card":
+  → action = "accept_gift_card"
+
+When customer clicks "No, Continue" or "Decline" or refuses the gift card:
+  → action = "ask_issue"
+  → System will show issue selection buttons automatically
+
+When customer selects Damaged/Wrong/Missing issue:
+  → action = "ask_evidence", issue = "damaged" | "wrong_item" | "missing"
+  → Ask the customer to describe what happened (and mention they can share a photo)
+
+When customer selects Changed Mind/Late/Other issue OR after providing evidence:
+  → action = "request_refund" | "request_replace" | "request_return"
+  → Set issue and evidence_description fields
+  → System will create a pending approval ticket automatically
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPONSE RULES
@@ -100,10 +130,13 @@ OUTPUT FORMAT — STRICT JSON ONLY
 Return ONLY this JSON — no text outside it, no markdown:
 
 {
-  "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | none",
+  "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | ask_retention | accept_gift_card | ask_issue | ask_evidence | request_refund | request_replace | request_return | none",
   "email": "customer email if known from conversation, else null",
   "order_id": "shopify internal order id if known from a previous lookup, else null",
   "order_number": "order number like 1042 if user mentioned it (digits only, no # prefix), else null",
+  "action_type": "refund | replace | return | null",
+  "issue": "damaged | wrong_item | missing | changed_mind | late | other | null",
+  "evidence_description": "customer-provided description of the problem, or null",
   "products": [{"name": "product name", "quantity": 1}],
   "inventory_query": "product name to check stock for, or null",
   "message": "The actual WhatsApp message to send — written naturally, as Ram"
@@ -465,10 +498,18 @@ async def _execute_action(
             if first_product_id:
                 image_url = await _get_product_image_url(first_product_id)
 
-        # Interactive button: Cancel only
-        buttons = [
-            {"id": f"cancel_{real_order_id}",  "title": "Cancel Order"},
-        ]
+        # Show RRR buttons for fulfilled orders, Cancel for unfulfilled
+        fulfillment_status = (order.get("fulfillment_status") or "").lower()
+        if fulfillment_status == "fulfilled":
+            buttons = [
+                {"id": f"refund_{real_order_id}",  "title": "Get Refund"},
+                {"id": f"replace_{real_order_id}", "title": "Replace Item"},
+                {"id": f"return_{real_order_id}",  "title": "Return Item"},
+            ]
+        else:
+            buttons = [
+                {"id": f"cancel_{real_order_id}", "title": "Cancel Order"},
+            ]
 
         interactive_payload = {
             "body":      details_text,
@@ -476,7 +517,7 @@ async def _execute_action(
             "image_url": image_url,
         }
         # Return a short text fallback + the interactive payload
-        return f"Here are your order details 👇", interactive_payload
+        return "Here are your order details 👇", interactive_payload
 
     # ── All remaining actions require email ───────────────────────────────────
     if not email and action not in ("cancel_order",):
@@ -584,6 +625,116 @@ async def _execute_action(
         # Fallback
         reply = await process_retention_response(ticket_id_ctx, "yes_cancel", "whatsapp") if ticket_id_ctx else default_msg
         return reply, None
+
+    # ── RRR: Gift card retention offer ───────────────────────────────────────
+    if action == "ask_retention":
+        action_type = (agent_result.get("action_type") or "refund").lower()
+        label_map = {"refund": "Refund", "replace": "Replacement", "return": "Return"}
+        label = label_map.get(action_type, "Request")
+        body_text = (
+            f"Before we process your {label} request, we'd like to offer you a "
+            f"*special gift card* as a thank-you for being a valued customer! 🎁\n\n"
+            f"Would you like to accept a *store gift card* instead?"
+        )
+        buttons = [
+            {"id": f"accept_gc_{action_type}", "title": "Accept Gift Card"},
+            {"id": f"decline_gc_{action_type}", "title": "No, Continue"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── RRR: Accept gift card ─────────────────────────────────────────────────
+    if action == "accept_gift_card":
+        from app.services.retention_service import create_retention_gift_card, get_retention_offer_message
+        ticket_id_ctx = agent_result.get("_ticket_id", "")
+        gc = await create_retention_gift_card(email or customer_phone, "whatsapp", ticket_id_ctx)
+        if gc and gc.get("code"):
+            msg = (
+                f"Great! 🎉 Your gift card is ready!\n\n"
+                f"🎁 *Gift Card Code:* `{gc['code']}`\n"
+                f"💰 *Value:* {gc.get('currency', 'INR')} {gc.get('balance', '500')}\n\n"
+                f"Use this code at checkout. Is there anything else I can help you with? 😊"
+            )
+        else:
+            msg = (
+                "Great choice! 🎉 We'll process your gift card and send the details to your email shortly.\n\n"
+                "Is there anything else I can help you with? 😊"
+            )
+        return msg, None
+
+    # ── RRR: Show issue selection buttons ─────────────────────────────────────
+    if action == "ask_issue":
+        action_type = (agent_result.get("action_type") or "refund").lower()
+        body_text = "Please tell us the reason for your request:"
+        buttons = [
+            {"id": f"issue_damaged_{action_type}",      "title": "Damaged Item"},
+            {"id": f"issue_wrong_{action_type}",        "title": "Wrong Item"},
+            {"id": f"issue_missing_{action_type}",      "title": "Missing Item"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── RRR: Ask for evidence / description ───────────────────────────────────
+    if action == "ask_evidence":
+        issue = (agent_result.get("issue") or "").lower()
+        issue_labels = {
+            "damaged": "damaged",
+            "wrong_item": "wrong",
+            "missing": "missing",
+        }
+        label = issue_labels.get(issue, "")
+        msg = (
+            f"I'm sorry to hear about the {label + ' ' if label else ''}item! 😔\n\n"
+            f"Could you please describe what happened? "
+            f"You can also share a photo if you have one — it helps us process your request faster."
+        )
+        return msg, None
+
+    # ── RRR: Submit refund / replace / return request ─────────────────────────
+    if action in ("request_refund", "request_replace", "request_return"):
+        action_type_map = {
+            "request_refund": "refund",
+            "request_replace": "replace",
+            "request_return": "return",
+        }
+        pending_action_type = action_type_map[action]
+        issue = (agent_result.get("issue") or "other").lower()
+        evidence = (agent_result.get("evidence_description") or default_msg or "").strip()
+        ticket_id_ctx = agent_result.get("_ticket_id", "")
+
+        # Resolve order_id from order_number if needed
+        resolved_order_id = order_id
+        resolved_order_number = order_number
+        if not resolved_order_id and order_number:
+            _order, _ = await _fetch_order_by_number(order_number, email)
+            if _order:
+                resolved_order_id = str(_order.get("id", ""))
+                resolved_order_number = str(_order.get("order_number", order_number))
+
+        if ticket_id_ctx:
+            from app.database import get_db as _get_db
+            _db = _get_db()
+            if _db is not None:
+                await _db.tickets.update_one(
+                    {"id": ticket_id_ctx},
+                    {"$set": {
+                        "status": "pending_admin_action",
+                        "pending_action_type": pending_action_type,
+                        "pending_action_order_id": resolved_order_id,
+                        "pending_action_order_number": resolved_order_number,
+                        "pending_action_email": email or "",
+                        "pending_action_issue": issue,
+                        "pending_action_description": evidence,
+                        "updated_at": __import__("datetime").datetime.utcnow(),
+                    }},
+                )
+
+        type_labels = {"refund": "Refund", "replace": "Replacement", "return": "Return"}
+        label = type_labels.get(pending_action_type, "Request")
+        msg = (
+            f"✅ Your *{label} Request* has been submitted!\n\n"
+            f"Our team will review it and get back to you within 24–48 hours.\n\n"
+            f"You'll receive a confirmation here on WhatsApp once it's processed. 😊"
+        )
+        return msg, None
 
     # ── Create order ──────────────────────────────────────────────────────────
     if action == "create_order":
@@ -728,19 +879,31 @@ async def process_whatsapp_message(
         # Send interactive button message if the action produced one
         if interactive_payload:
             try:
-                from app.services.whatsapp_service import get_whatsapp_config, send_interactive_buttons
+                from app.services.whatsapp_service import (
+                    get_whatsapp_config,
+                    send_interactive_buttons,
+                    send_image_with_buttons,
+                )
                 from app.models.message import MessageInDB as _MsgInDB
                 from app.database import get_db as _get_db
 
                 wa_cfg = await get_whatsapp_config(merchant_id)
-                iresult = await send_interactive_buttons(
-                    to_phone=customer_phone,
-                    body_text=interactive_payload["body"],
-                    buttons=interactive_payload["buttons"],
-                    image_url=interactive_payload.get("image_url", ""),
-                    footer_text="Tap a button to take action",
-                    config=wa_cfg,
-                )
+                img_url = interactive_payload.get("image_url", "")
+                if img_url:
+                    iresult = await send_image_with_buttons(
+                        customer_phone,
+                        img_url,
+                        interactive_payload["body"],
+                        interactive_payload["buttons"],
+                        wa_cfg,
+                    )
+                else:
+                    iresult = await send_interactive_buttons(
+                        customer_phone,
+                        interactive_payload["body"],
+                        interactive_payload["buttons"],
+                        wa_cfg,
+                    )
                 # Persist the interactive message to the ticket thread
                 _db = _get_db()
                 if _db is not None:
