@@ -266,6 +266,88 @@ async def send_interactive_buttons(
         return {"error": str(e)}
 
 
+async def send_list_message(
+    to_phone: str,
+    body_text: str,
+    button_label: str,
+    sections: list,
+    config: dict,
+    header_text: str = "",
+) -> dict:
+    """Send a WhatsApp interactive list message (up to 10 items per section).
+
+    sections format: [{"title": "Section Name", "rows": [{"id": "row_id", "title": "Row Title", "description": "Optional"}]}]
+    button_label: the text on the button that opens the list (max 20 chars)
+    """
+    phone_number_id = config.get("phone_number_id", "")
+    access_token = config.get("access_token", "")
+    if not phone_number_id or not access_token:
+        return {"error": "not_configured"}
+
+    if len(body_text) > 1024:
+        body_text = body_text[:1020] + "…"
+
+    to_phone_clean = to_phone.lstrip("+")
+
+    interactive: dict = {
+        "type": "list",
+        "body": {"text": body_text},
+        "action": {
+            "button": button_label[:20],
+            "sections": [
+                {
+                    "title": sec.get("title", "Options")[:24],
+                    "rows": [
+                        {
+                            "id": row.get("id", f"row_{i}")[:256],
+                            "title": row.get("title", "")[:24],
+                            **({"description": row["description"][:72]} if row.get("description") else {}),
+                        }
+                        for i, row in enumerate(sec.get("rows", [])[:10])
+                    ],
+                }
+                for sec in sections[:10]
+            ],
+        },
+    }
+
+    if header_text:
+        interactive["header"] = {"type": "text", "text": header_text[:60]}
+
+    url = f"{GRAPH_API_BASE}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_phone_clean,
+        "type": "interactive",
+        "interactive": interactive,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, json=payload, headers=headers, timeout=15.0)
+            try:
+                resp_body = r.json()
+            except Exception:
+                resp_body = {"raw": r.text}
+            if r.status_code >= 400:
+                err = resp_body.get("error", {})
+                print(
+                    f"[WhatsApp] List message send FAILED to={to_phone_clean} "
+                    f"status={r.status_code} error={err}"
+                )
+                return {"error": str(err), "status_code": r.status_code}
+            print(f"[WhatsApp] List message SENT to={to_phone_clean}")
+            return resp_body
+    except Exception as e:
+        print(f"[WhatsApp] List message network error: {e}")
+        return {"error": str(e)}
+
+
 async def send_image_with_buttons(
     to_phone: str,
     image_url: str,

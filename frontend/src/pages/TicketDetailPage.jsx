@@ -43,6 +43,9 @@ export default function TicketDetailPage() {
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectInput, setShowRejectInput] = useState(false);
 
   async function loadTicket() {
     try {
@@ -93,6 +96,26 @@ export default function TicketDetailPage() {
       await api.patch(`/tickets/${id}`, { status: 'resolved' });
       await loadTicket();
     } catch {}
+  }
+
+  async function approveAction() {
+    setActionLoading(true);
+    try {
+      await api.post(`/ai/approve-action/${id}`);
+      await loadTicket();
+    } catch {}
+    setActionLoading(false);
+  }
+
+  async function rejectAction() {
+    setActionLoading(true);
+    try {
+      await api.post(`/ai/reject-action/${id}`, { rejection_reason: rejectReason });
+      setShowRejectInput(false);
+      setRejectReason('');
+      await loadTicket();
+    } catch {}
+    setActionLoading(false);
   }
 
   if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>;
@@ -193,6 +216,72 @@ export default function TicketDetailPage() {
             </div>
           )}
         </div>
+
+        {/* Pending Admin Action Banner */}
+        {ticket.status === 'pending_admin_action' && (
+          <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-orange-600 font-semibold text-sm">⏳ Pending Admin Approval</span>
+              <span className="badge bg-orange-100 text-orange-700 text-xs uppercase">
+                {ticket.pending_action_type || 'request'}
+              </span>
+            </div>
+            <div className="text-sm text-gray-700 space-y-1 mb-3">
+              {ticket.pending_action_order_number && (
+                <div>Order: <strong>#{ticket.pending_action_order_number}</strong></div>
+              )}
+              {ticket.pending_action_issue && (
+                <div>Issue: <strong className="capitalize">{ticket.pending_action_issue.replace(/_/g, ' ')}</strong></div>
+              )}
+              {ticket.pending_action_description && (
+                <div>Description: <span className="text-gray-600">{ticket.pending_action_description}</span></div>
+              )}
+            </div>
+            {!showRejectInput ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={approveAction}
+                  disabled={actionLoading}
+                  className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                >
+                  {actionLoading ? 'Processing...' : '✅ Approve Request'}
+                </button>
+                <button
+                  onClick={() => setShowRejectInput(true)}
+                  disabled={actionLoading}
+                  className="px-4 py-2 rounded-lg bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 disabled:opacity-50"
+                >
+                  ❌ Reject Request
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  placeholder="Rejection reason (optional)"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={rejectAction}
+                    disabled={actionLoading}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Rejecting...' : 'Confirm Reject'}
+                  </button>
+                  <button
+                    onClick={() => { setShowRejectInput(false); setRejectReason(''); }}
+                    className="px-4 py-2 rounded-lg bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Message thread */}
         <div className="space-y-3 mb-6">

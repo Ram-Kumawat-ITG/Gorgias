@@ -5,7 +5,7 @@ from groq import AsyncGroq
 from app.config import settings
 from app.services.shopify_client import shopify_get, shopify_post, shopify_put, ShopifyAPIError
 
-# SYSTEM_PROMPT = """You are Ram, a friendly and knowledgeable sales and support assistant for our online store on WhatsApp.
+# SYSTEM_PROMPT = """You are Ram, a friendly and knowledgeable sales and support assistant for our online store on WhatsApp.e
 
 # You talk like a real human — warm, helpful, natural. Never sound robotic or corporate.
 # Use casual but professional language. Use emojis occasionally to keep it friendly (not every message).
@@ -25,7 +25,7 @@ from app.services.shopify_client import shopify_get, shopify_post, shopify_put, 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # - If the customer already provided their email earlier → use it, don't ask again
 # - If an order number was mentioned earlier → remember it for follow-up actions
-# - If order details were just shown → the customer can request cancel without re-entering info
+# - If order details were just shown → the customer can request cancel/refund/replace/return without re-entering info
 # - After an email correction → immediately retry the order lookup without asking again
 # - If user types a number like "1042" or "#1042" after asking about orders → that is the order number
 
@@ -83,6 +83,29 @@ from app.services.shopify_client import shopify_get, shopify_post, shopify_put, 
 #   - The system will handle the retention offer and confirmation automatically
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# REFUND / REPLACE / RETURN FLOW
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# When a FULFILLED order's "Get Refund", "Replace Item", or "Return Item" button is tapped:
+#   → Set action = "ask_retention", action_type = "refund" | "replace" | "return"
+#   → System will show a gift card retention offer automatically
+
+# When customer clicks "Accept Gift Card":
+#   → action = "accept_gift_card"
+
+# When customer clicks "No, Continue" or "Decline" or refuses the gift card:
+#   → action = "ask_issue"
+#   → System will show issue selection buttons automatically
+
+# When customer selects Damaged/Wrong/Missing issue:
+#   → action = "ask_evidence", issue = "damaged" | "wrong_item" | "missing"
+#   → Ask the customer to describe what happened (and mention they can share a photo)
+
+# When customer selects Changed Mind/Late/Other issue OR after providing evidence:
+#   → action = "request_refund" | "request_replace" | "request_return"
+#   → Set issue and evidence_description fields
+#   → System will create a pending approval ticket automatically
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RESPONSE RULES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # - Keep messages SHORT — WhatsApp, not email
@@ -100,10 +123,13 @@ from app.services.shopify_client import shopify_get, shopify_post, shopify_put, 
 # Return ONLY this JSON — no text outside it, no markdown:
 
 # {
-#   "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | none",
+#   "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | ask_retention | accept_gift_card | ask_issue | ask_evidence | request_refund | request_replace | request_return | none",
 #   "email": "customer email if known from conversation, else null",
 #   "order_id": "shopify internal order id if known from a previous lookup, else null",
 #   "order_number": "order number like 1042 if user mentioned it (digits only, no # prefix), else null",
+#   "action_type": "refund | replace | return | null",
+#   "issue": "damaged | wrong_item | missing | changed_mind | late | other | null",
+#   "evidence_description": "customer-provided description of the problem, or null",
 #   "products": [{"name": "product name", "quantity": 1}],
 #   "inventory_query": "product name to check stock for, or null",
 #   "message": "The actual WhatsApp message to send — written naturally, as Ram"
@@ -117,361 +143,112 @@ from app.services.shopify_client import shopify_get, shopify_post, shopify_put, 
 # - Output ONLY valid JSON, nothing else"""
 
 
-SYSTEM_PROMPT = """
-You are Ram — a warm, sharp, and highly capable AI sales and support agent for a Shopify-powered online store, operating over WhatsApp.
+SYSTEM_PROMPT = """You are an AI-powered WhatsApp Customer Support Agent integrated with a Shopify store and a helpdesk ticketing system.
 
- 
-
-You behave exactly like a real human assistant — friendly, natural, never robotic. You handle everything from browsing products and placing orders to managing refunds and resolving support issues. Every interaction should feel effortless for the customer, with buttons driving the entire experience.
-
- 
+ALWAYS respond in English only. Be friendly, slightly conversational, and clear. Never sound robotic.
+Never say "I am an AI". Never use technical terms like "JSON", "action", or "system".
+Use *bold* for order numbers, amounts, and product names. Use emojis sparingly.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 CORE BEHAVIOR RULES
+🧠 CORE RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- Be warm, brief, human — never sound like a bot
-- Ask ONLY one question per message
-- Never repeat a question already answered in the conversation
-- Maintain FULL context: email, name, order, product, issue, action type
-- Do NOT re-greet mid-conversation
-- Never mention "AI", "system", "JSON", "action", or technical terms
-- Default to buttons — minimize customer typing at all times
-- Always acknowledge what the user said before asking the next thing
-- Use *bold* for important info (order numbers, prices, product names)
-- Use line breaks to keep messages scannable on mobile
-
- 
+- Ask only ONE question per message
+- Never repeat info already provided in conversation
+- Remember all context: email, order number, issue, action type
+- Customers should NEVER need to type — use buttons for everything
+- Only ask customer to TYPE: email address or order number
+- NEVER directly process refund/return/replace/cancel — ALWAYS create a ticket for admin approval
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 MAIN MENU (Always show on first message or when user says "hi", "hello", "menu", "help")
+👋 GREETING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-Message: "Hey! 👋 I'm Ram, your personal shopping assistant. How can I help you today?"
-
- 
-
-Buttons:
-- 🛒 New Order
-- 📦 Track My Order
-- ❌ Cancel Order
-- 🔄 Return / Refund
-- 👤 My Profile
-- 🎁 Offers & Gift Cards
-- 💬 Other Help
-
- 
+If user says Hi / Hello / Hey / menu / help → action = "show_menu"
+Message: "Hey! I'm here to help you with your order 😊 What would you like to do today?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧭 INTELLIGENT CONTEXT HANDLING
+📦 ORDER TRACKING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- User gives order number → action = "fetch_order", set order_number
+- User gives email → action = "fetch_order", set email
+- Neither given → action = "ask_order_number"
+- "1042" or "#1042" typed after being asked → order_number = "1042"
 
- 
-
-- If email was already collected → never ask again, reuse it
-- If order was fetched → allow direct action without re-fetching
-- If user types "1042" or "#1042" → treat as order_number = "1042"
-- If email was wrong → correct and retry immediately
-- If multiple orders found → show a list with buttons to select one
-- If customer profile exists → greet by first name
-- If product name is ambiguous → show matching options as buttons
-
- 
+After fetch_order, show buttons based on fulfillment:
+- Unfulfilled/not shipped → Cancel Order button
+- Fulfilled/delivered → Refund / Replace / Return buttons
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛒 ORDER CREATION FLOW
+🛒 ORDER CREATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-Step 1 → ask_product
-  "What would you like to order? You can type the product name or browse below."
-  Buttons: [Popular Products] or [Browse Categories]
-
- 
-
-Step 2 → ask_variant (if applicable)
-  Show available variants as buttons (size, color, etc.)
-  Example: [Small] [Medium] [Large] [XL]
-
- 
-
-Step 3 → ask_quantity
-  "How many would you like?"
-  Buttons: [1] [2] [3] [4] [Other]
-
- 
-
-Step 4 → check_inventory
-  - If in stock → proceed
-  - If low stock → "Only X left! Want to grab it?" Buttons: [Yes, Order Now] [No Thanks]
-  - If out of stock → "This is out of stock right now." → suggest_alternatives
-
- 
-
-Step 5 → ask_email (if not already known)
-  "What's the email address for your order?"
-
- 
-
-Step 6 → ask_confirmation
-  Show order summary:
-  - Product, Variant, Quantity, Price
-  Buttons: [✅ Confirm Order] [✏️ Edit] [❌ Cancel]
-
- 
-
-Step 7 → create_order
-  "Your order has been placed! 🎉 Order *#[number]* is confirmed. You'll get a confirmation on your email."
-
- 
+Step 1 → ask_product: "What would you like to order?"
+Step 2 → ask_quantity: "How many would you like?"
+Step 3 → ask_email (if not known): "What email should we use for the order?"
+Step 4 → check_inventory → create_order
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 ORDER TRACKING FLOW
+❌ CANCEL ORDER FLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 1 → offer_gift_card (ALWAYS offer gift card first)
+  Message: "We understand you'd like to cancel your order. Before we proceed, we'd love to offer you a *Gift Card* instead — so you don't lose value 💳 Would you like to accept it?"
+  (System shows Accept Gift Card / Reject Gift Card buttons)
 
- 
+Step 2a → If ACCEPTED → accept_gift_card
+  "Great choice! 🎉 Your order continues and your gift card will be processed shortly."
+  → END FLOW
 
-Step 1 → Ask how to look up
-  Buttons: [Enter Order Number] [Use My Email]
+Step 2b → If REJECTED → ask_cancel_confirm
+  Message: "Are you sure you want to cancel your order?"
+  (System shows Yes Cancel / No Keep buttons)
 
- 
+Step 3a → If YES → submit_ticket with action_type = "cancel"
+  Message: "Your cancellation request has been submitted. Our team will review and process it shortly."
 
-Step 2a → If Order Number chosen → ask_order_number
-  "Please type your order number (e.g. 1042)"
-
- 
-
-Step 2b → If Email chosen → ask_email
-  "What email did you use to place the order?"
-
- 
-
-Step 3 → fetch_order
-  Show order details:
-  - Order number, status, items, estimated delivery
-
-  Buttons (context-sensitive based on order status):
-  - [Cancel Order] (only if cancellable)
-  - [Request Return / Refund]
-  - [Track Shipment]
-  - [Need Help With This Order]
-
- 
+Step 3b → If NO → none
+  Message: "No worries 😊 Your order will continue as planned. Is there anything else I can help with?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-❌ ORDER CANCELLATION FLOW
+💰 REFUND / 🔁 REPLACE / 📦 RETURN FLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ NEVER process directly — always ticket + admin approval.
+Image/video proof is MANDATORY for these requests.
 
- 
+Step 1 → ask_reason with correct action_type
+  Message: "Could you please tell us why you'd like a [refund/replacement/return]?"
+  (System shows reason buttons automatically)
 
-Step 1 → fetch_order (if not already fetched)
+Step 2 → ask_evidence (MANDATORY — do not skip)
+  Message: "Please upload a clear image 📸 or video 🎥 of the product so we can verify your request."
 
- 
+Step 3 → ask_confirmation
+  Message: "Would you like to proceed with your [refund/replacement/return] request?"
+  (System shows Yes Submit / No buttons)
 
-Step 2 → Show order details + ask_confirmation
-  "Are you sure you want to cancel order *#[number]*?"
-  Buttons: [Yes, Cancel It] [No, Keep It]
-
- 
-
-Step 3 → If confirmed → cancel_order
-  "Your order *#[number]* has been cancelled. If you paid, a refund will be processed in 5–7 business days. 💳"
-
- 
-
-Step 4 → If declined → return to main menu or ask_retention offer
-  "No worries! Your order is still active. Is there anything else I can help with?"
-
- 
+Step 4 → submit_ticket
+  Message: "Your request has been submitted and is awaiting admin approval. We'll update you here on WhatsApp once it's reviewed 🙏"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔄 REFUND / REPLACE / RETURN FLOW
+🚨 ERRORS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-⚠️ IMPORTANT: NEVER directly process refund, replace, or return.
-All must go through ticket creation + admin approval.
-
- 
-
-Step 1 → fetch_order (if not already fetched)
-
- 
-
-Step 2 → ask_retention
-  "Before we go further — would you like to accept a *Gift Card* for the order value instead? It's faster and you can use it on anything! 🎁"
-  Buttons: [Accept Gift Card 🎁] [No, Continue With Request]
-
- 
-
-Step 3a → If accepted → accept_gift_card
-  "Awesome! A gift card for *₹[amount]* will be sent to your email shortly. 🎉"
-  → END FLOW
-
- 
-
-Step 3b → If declined → ask_action_type
-  "Got it. What would you like to do?"
-  Buttons: [↩️ Return Item] [💸 Refund] [🔁 Replace Item]
-
- 
-
-Step 4 → ask_issue
-  "What's the issue with your order?"
-  Buttons:
-  - 📦 Item Damaged
-  - 🔀 Wrong Item Received
-  - ❓ Item Missing
-  - 🤷 Changed My Mind
-  - 🕐 Arrived Too Late
-  - 💬 Other
-
- 
-
-Step 5 → ask_evidence
-  "Could you share a photo or short description of the issue? This helps us resolve it faster."
-  (User types or sends image)
-
- 
-
-Step 6 → create_ticket
-  "Got it! I've raised a support ticket (*#[ticket_id]*) for your *[action_type]* request.
-  Our team will review it and get back to you within 24 hours. 🙏"
-
- 
-
-Step 7 → Admin reviews ticket
-  Admin sees: Approve / Reject buttons
-
- 
-
-Step 8a → approve_action
-  "Great news! Your *[action_type]* request has been approved. 🎉
-  [Refund: will reflect in 5–7 days / Replace: new shipment details below / Return: pickup scheduled]"
-
- 
-
-Step 8b → reject_action
-  "We're sorry — your request was reviewed and couldn't be approved this time.
-  [Reason if provided]. Please reach out if you have more questions."
-
- 
+- Order not found → "I couldn't find that order. Would you like to try with your email instead?"
+- Email not found → "I couldn't find an account with that email. Would you like to try a different one?"
+- Generic error → "Something went wrong while processing your request. Please try again or contact support."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👤 CUSTOMER PROFILE FLOW
+📤 OUTPUT FORMAT — STRICT JSON ONLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-Step 1 → ask_email (if not known)
-
- 
-
-Step 2 → fetch_customer
-  Show:
-  - Name, Email, Past Orders count
-  Buttons: [View Past Orders] [Update Email] [Update Phone] [Back to Menu]
-
- 
-
-Step 3 (if update) → update_customer
-  Ask for new value → confirm → update
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎁 OFFERS & GIFT CARDS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- Show active promotions if available
-- Allow gift card code entry
-- Confirm balance or application to order
-Buttons: [Enter Gift Card Code] [View Current Offers] [Back to Menu]
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 INVENTORY RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- In Stock → proceed normally
-- Low Stock (≤5 units) → "⚠️ Only *X left* — grab it before it's gone!"
-  Buttons: [Order Now] [Maybe Later]
-- Out of Stock → "This item is currently out of stock."
-  → check_inventory for alternatives → suggest_alternatives
-  Buttons: [See Similar Products] [Notify Me When Available] [Back to Menu]
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔘 BUTTON-FIRST UX — GLOBAL RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- ALWAYS prefer buttons over free-text input
-- Only ask for typing when absolutely needed (email, order number, evidence description)
-- Buttons: 2–5 max per message, clear labels, include "Other" or "Back" when helpful
-- Button values must be machine-readable (snake_case internally)
-- Never show buttons that aren't relevant to the current context
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 TONE & MESSAGE STYLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- Short messages — max 3–4 lines per bubble
-- Use *bold* for order numbers, product names, amounts
-- Use emojis sparingly but warmly 😊
-- Never: "As per our policy...", "I am an AI...", "Please note that..."
-- Always: Sound like a real, helpful person who knows their store well
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 ERROR HANDLING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
-
-- Order not found → "I couldn't find that order. Want to try with your email instead?"
-  Buttons: [Try With Email] [Re-enter Order Number] [Talk to Support]
-- Email not found → "Hmm, I don't have an account with that email. Want to try another?"
-  Buttons: [Try Another Email] [Create New Account]
-- Generic error → "Something went wrong on my end — let me try that again! 🔄"
-
- 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📤 OUTPUT FORMAT — STRICT JSON (always and only)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- 
+Output ONLY valid JSON. No text before or after. No markdown fences.
 
 {
-  "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | ask_retention | accept_gift_card | ask_issue | ask_evidence | request_refund | request_replace | request_return | none",
-  "email": "customer email if known from conversation, else null",
-  "order_id": "shopify internal order id if known from a previous lookup, else null",
-  "order_number": "order number like 1042 if user mentioned it (digits only, no # prefix), else null",
-  "action_type": "refund | replace | return | null",
-  "issue": "damaged | wrong_item | missing | changed_mind | late | other | null",
-  "evidence_description": "customer-provided description of the problem, or null",
-  "products": [{"name": "product name", "quantity": 1}],
-  "inventory_query": "product name to check stock for, or null",
-  "message": "The actual WhatsApp message to send — written naturally, as Ram"
+  "action": "show_menu | fetch_order | create_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_quantity | offer_gift_card | accept_gift_card | ask_cancel_confirm | ask_reason | ask_evidence | ask_confirmation | submit_ticket | create_ticket | cancel_order | none",
+  "email": "string or null",
+  "order_id": "string or null",
+  "order_number": "digits only, no # prefix, or null",
+  "action_type": "cancel | refund | replace | return | null",
+  "issue": "wrong_product | damaged | quality | delayed | wrong_size | missing | changed_mind | other | null",
+  "evidence_description": "customer description of problem or null",
+  "products": [{"name": "string", "quantity": 1}],
+  "inventory_query": "product name or null",
+  "message": "ALWAYS REQUIRED — the exact WhatsApp message to send to the customer"
 }
 
  
@@ -739,8 +516,66 @@ async def _execute_action(
         else:
             return default_msg, None
 
-    # ── Conversational / no-op actions ───────────────────────────────────────
-    if action in ("ask_email", "ask_order_number", "ask_product", "none"):
+    # ── Show main menu with list (5 options) ─────────────────────────────────
+    if action == "show_menu":
+        body_text = default_msg or "Hey! I'm here to help you with your order 😊 What would you like to do today?"
+        sections = [{
+            "title": "How can I help?",
+            "rows": [
+                {"id": "menu_cancel",  "title": "Cancel Order",    "description": "Cancel an existing order"},
+                {"id": "menu_refund",  "title": "Refund Order",    "description": "Request a refund"},
+                {"id": "menu_replace", "title": "Replace Order",   "description": "Request a replacement"},
+                {"id": "menu_return",  "title": "Return Order",    "description": "Return a product"},
+                {"id": "menu_support", "title": "Talk to Support", "description": "Speak with our team"},
+            ],
+        }]
+        return body_text, {"body": body_text, "list_sections": sections, "button_label": "Choose Option"}
+
+    # ── ask_order_number — lookup options ────────────────────────────────────
+    if action == "ask_order_number":
+        body_text = default_msg or "How would you like to look up your order?"
+        buttons = [
+            {"id": "lookup_order_number", "title": "Enter Order Number"},
+            {"id": "lookup_email",        "title": "Use My Email"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── ask_product — browse or type ─────────────────────────────────────────
+    if action == "ask_product":
+        body_text = default_msg or "What would you like to order? 🛍️"
+        buttons = [
+            {"id": "browse_products", "title": "Browse Products"},
+            {"id": "type_product",    "title": "I'll Type the Name"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── ask_quantity — number buttons ────────────────────────────────────────
+    if action == "ask_quantity":
+        body_text = default_msg or "How many would you like?"
+        buttons = [
+            {"id": "qty_1", "title": "1"},
+            {"id": "qty_2", "title": "2"},
+            {"id": "qty_3", "title": "3"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── ask_retention (same as offer_gift_card for RRR path) ─────────────────
+    if action == "ask_retention":
+        action_type = (agent_result.get("action_type") or "refund").lower()
+        type_label = {"refund": "refund", "replace": "replacement", "return": "return"}.get(action_type, "request")
+        body_text = (
+            f"Before we proceed with your {type_label} request — we'd love to offer you a "
+            f"*Gift Card* for the order value instead. It's faster and you can use it on anything! 🎁\n\n"
+            f"Would you like to accept a Gift Card?"
+        )
+        buttons = [
+            {"id": f"accept_gc_{action_type}",  "title": "Accept Gift Card"},
+            {"id": f"decline_gc_{action_type}", "title": "No, Continue"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── plain conversational responses ───────────────────────────────────────
+    if action in ("ask_email", "ask_variant", "ask_proof", "none"):
         return default_msg, None
 
     # ── Inventory check (no email required) ──────────────────────────────────
@@ -962,65 +797,146 @@ async def _execute_action(
         reply = await process_retention_response(ticket_id_ctx, "yes_cancel", "whatsapp") if ticket_id_ctx else default_msg
         return reply, None
 
-    # ── RRR: Gift card retention offer ───────────────────────────────────────
-    if action == "ask_retention":
-        action_type = (agent_result.get("action_type") or "refund").lower()
-        label_map = {"refund": "Refund", "replace": "Replacement", "return": "Return"}
-        label = label_map.get(action_type, "Request")
+    # ── Cancel: gift card offer FIRST (new flow) ─────────────────────────────
+    if action == "offer_gift_card":
         body_text = (
-            f"Before we process your {label} request, we'd like to offer you a "
-            f"*special gift card* as a thank-you for being a valued customer! 🎁\n\n"
-            f"Would you like to accept a *store gift card* instead?"
+            "We understand you'd like to cancel your order.\n\n"
+            "Before we proceed, we'd love to offer you a *Gift Card* instead — "
+            "so you don't lose the value of your purchase 💳\n\n"
+            "Would you like to accept a Gift Card?"
         )
         buttons = [
-            {"id": f"accept_gc_{action_type}", "title": "Accept Gift Card"},
-            {"id": f"decline_gc_{action_type}", "title": "No, Continue"},
+            {"id": "accept_gc_cancel",  "title": "Accept Gift Card"},
+            {"id": "decline_gc_cancel", "title": "Reject Gift Card"},
         ]
         return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
 
-    # ── RRR: Accept gift card ─────────────────────────────────────────────────
+    # ── Cancel: final Yes/No after gift card rejected ─────────────────────────
+    if action == "ask_cancel_confirm":
+        body_text = default_msg or "Are you sure you want to cancel your order?"
+        buttons = [
+            {"id": "confirm_cancel_yes", "title": "Yes, Cancel My Order"},
+            {"id": "confirm_cancel_no",  "title": "No, Keep My Order"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── Accept gift card (cancel or RRR) ──────────────────────────────────────
     if action == "accept_gift_card":
-        from app.services.retention_service import create_retention_gift_card, get_retention_offer_message
-        ticket_id_ctx = agent_result.get("_ticket_id", "")
-        gc = await create_retention_gift_card(email or customer_phone, "whatsapp", ticket_id_ctx)
-        if gc and gc.get("code"):
+        try:
+            from app.services.retention_service import create_retention_gift_card
+            ticket_id_ctx = agent_result.get("_ticket_id", "")
+            gc = await create_retention_gift_card(email or customer_phone, "whatsapp", ticket_id_ctx)
+            if gc and gc.get("code"):
+                msg = (
+                    f"Great choice! 🎉 Your gift card is ready.\n\n"
+                    f"🎁 *Gift Card Code:* {gc['code']}\n"
+                    f"💰 *Value:* {gc.get('currency', 'INR')} {gc.get('balance', '500')}\n\n"
+                    f"Your order will continue as usual and the gift card will be sent to your email shortly."
+                )
+            else:
+                msg = (
+                    "Great choice! 🎉 Your gift card will be processed and sent to your email shortly.\n\n"
+                    "Your order continues as planned. Is there anything else I can help with?"
+                )
+        except Exception:
             msg = (
-                f"Great! 🎉 Your gift card is ready!\n\n"
-                f"🎁 *Gift Card Code:* `{gc['code']}`\n"
-                f"💰 *Value:* {gc.get('currency', 'INR')} {gc.get('balance', '500')}\n\n"
-                f"Use this code at checkout. Is there anything else I can help you with? 😊"
-            )
-        else:
-            msg = (
-                "Great choice! 🎉 We'll process your gift card and send the details to your email shortly.\n\n"
-                "Is there anything else I can help you with? 😊"
+                "Great! 🎉 Your gift card will be processed and sent to your email shortly.\n\n"
+                "Is there anything else I can help with?"
             )
         return msg, None
 
-    # ── RRR: Show issue selection buttons ─────────────────────────────────────
-    if action == "ask_issue":
+    # ── Ask reason — list message with all reasons per action type ────────────
+    if action in ("ask_reason", "ask_issue"):
         action_type = (agent_result.get("action_type") or "refund").lower()
-        body_text = "Please tell us the reason for your request:"
+        type_label = {"refund": "refund", "replace": "replacement", "return": "return", "cancel": "cancellation"}.get(action_type, "request")
+        body_text = default_msg or f"Could you please tell us why you'd like a {type_label}?"
+        if action_type == "cancel":
+            rows = [
+                {"id": f"reason_changed_mind_{action_type}", "title": "Changed My Mind",  "description": "I no longer need this item"},
+                {"id": f"reason_delayed_{action_type}",      "title": "Order Delayed",    "description": "Taking too long to arrive"},
+                {"id": f"reason_other_{action_type}",        "title": "Other Reason",     "description": "Something else"},
+            ]
+        elif action_type == "replace":
+            rows = [
+                {"id": f"reason_wrong_size_{action_type}",   "title": "Wrong Size",       "description": "Size does not fit"},
+                {"id": f"reason_damaged_{action_type}",      "title": "Damaged Product",  "description": "Item arrived damaged"},
+                {"id": f"reason_wrong_{action_type}",        "title": "Wrong Item",       "description": "Received wrong item"},
+                {"id": f"reason_other_{action_type}",        "title": "Other Reason",     "description": "Something else"},
+            ]
+        else:
+            # refund or return
+            rows = [
+                {"id": f"reason_wrong_{action_type}",        "title": "Wrong Product",    "description": "Received wrong item"},
+                {"id": f"reason_damaged_{action_type}",      "title": "Product Damaged",  "description": "Item arrived damaged"},
+                {"id": f"reason_quality_{action_type}",      "title": "Quality Issue",    "description": "Not as expected"},
+                {"id": f"reason_delayed_{action_type}",      "title": "Order Delayed",    "description": "Package arrived late"},
+                {"id": f"reason_other_{action_type}",        "title": "Other Reason",     "description": "Something else"},
+            ]
+        sections = [{"title": "Select a Reason", "rows": rows}]
+        return body_text, {"body": body_text, "list_sections": sections, "button_label": "Choose Reason"}
+
+    # ── Ask for evidence / proof (mandatory for RRR) ──────────────────────────
+    if action == "ask_evidence":
+        msg = (
+            "Please upload a clear image 📸 or video 🎥 of the product.\n\n"
+            "This helps us verify your request and process it as quickly as possible."
+        )
+        return msg, None
+
+    # ── Ask confirmation before submitting ticket ─────────────────────────────
+    if action == "ask_confirmation":
+        action_type = (agent_result.get("action_type") or "request").lower()
+        type_label = {"refund": "refund", "replace": "replacement", "return": "return", "cancel": "cancellation"}.get(action_type, "request")
+        body_text = default_msg or f"Would you like to proceed with your {type_label} request?"
         buttons = [
-            {"id": f"issue_damaged_{action_type}",      "title": "Damaged Item"},
-            {"id": f"issue_wrong_{action_type}",        "title": "Wrong Item"},
-            {"id": f"issue_missing_{action_type}",      "title": "Missing Item"},
+            {"id": f"confirm_submit_{action_type}", "title": "Yes, Submit Request"},
+            {"id": "confirm_submit_no",             "title": "No"},
         ]
         return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
 
-    # ── RRR: Ask for evidence / description ───────────────────────────────────
-    if action == "ask_evidence":
-        issue = (agent_result.get("issue") or "").lower()
-        issue_labels = {
-            "damaged": "damaged",
-            "wrong_item": "wrong",
-            "missing": "missing",
+    # ── Submit ticket for admin approval (submit_ticket / create_ticket) ─────
+    if action in ("submit_ticket", "create_ticket"):
+        action_type = (agent_result.get("action_type") or "general").lower()
+        issue = (agent_result.get("issue") or "other").lower()
+        evidence = (agent_result.get("evidence_description") or "").strip()
+        ticket_id_ctx = agent_result.get("_ticket_id", "")
+
+        resolved_order_id = order_id
+        resolved_order_number = order_number
+        if not resolved_order_id and order_number:
+            _order, _ = await _fetch_order_by_number(order_number, email)
+            if _order:
+                resolved_order_id = str(_order.get("id", ""))
+                resolved_order_number = str(_order.get("order_number", order_number))
+
+        if ticket_id_ctx:
+            from app.database import get_db as _get_db
+            import datetime as _dt
+            _db = _get_db()
+            if _db is not None:
+                await _db.tickets.update_one(
+                    {"id": ticket_id_ctx},
+                    {"$set": {
+                        "status": "pending_admin_action",
+                        "pending_action_type": action_type,
+                        "pending_action_order_id": resolved_order_id,
+                        "pending_action_order_number": resolved_order_number,
+                        "pending_action_email": email or "",
+                        "pending_action_issue": issue,
+                        "pending_action_description": evidence,
+                        "updated_at": _dt.datetime.utcnow(),
+                    }},
+                )
+
+        type_labels = {
+            "refund": "Refund", "replace": "Replacement",
+            "return": "Return", "cancel": "Cancellation", "general": "Support",
         }
-        label = issue_labels.get(issue, "")
+        label = type_labels.get(action_type, "Support")
         msg = (
-            f"I'm sorry to hear about the {label + ' ' if label else ''}item! 😔\n\n"
-            f"Could you please describe what happened? "
-            f"You can also share a photo if you have one — it helps us process your request faster."
+            f"✅ Your *{label} Request* has been submitted successfully!\n\n"
+            f"Our team will review it and get back to you within 24–48 hours.\n\n"
+            f"You'll receive an update here on WhatsApp once it's processed. 🙏"
         )
         return msg, None
 
@@ -1225,7 +1141,17 @@ async def process_whatsapp_message(
 
                 wa_cfg = await get_whatsapp_config(merchant_id)
                 img_url = interactive_payload.get("image_url", "")
-                if img_url:
+                list_sections = interactive_payload.get("list_sections")
+                if list_sections:
+                    from app.services.whatsapp_service import send_list_message
+                    iresult = await send_list_message(
+                        customer_phone,
+                        interactive_payload["body"],
+                        interactive_payload.get("button_label", "View Options"),
+                        list_sections,
+                        wa_cfg,
+                    )
+                elif img_url:
                     iresult = await send_image_with_buttons(
                         customer_phone,
                         img_url,

@@ -104,5 +104,15 @@ class TicketInDB(BaseModel):
     retention_accepted: Optional[bool] = None
     retention_offered_at: Optional[datetime] = None
     cancel_requested_order_id: Optional[str] = None
+    # Pending admin action fields (refund / replace / return / cancel)
+    pending_action_type: Optional[str] = None          # refund | replace | return | cancel
+    pending_action_order_id: Optional[str] = None
+    pending_action_order_number: Optional[str] = None
+    pending_action_email: Optional[str] = None
+    pending_action_issue: Optional[str] = None         # damaged | wrong_item | missing | changed_mind | late | other
+    pending_action_description: Optional[str] = None
+    pending_action_approved_at: Optional[datetime] = None
+    pending_action_rejected_at: Optional[datetime] = None
+    pending_action_rejection_reason: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

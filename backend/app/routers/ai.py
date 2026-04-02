@@ -177,3 +177,184 @@ async def process_ticket(ticket_id: str, agent=Depends(get_current_agent)):
         "reply_sent": False,
         "analysis": analysis,
     }
+
+
+class ApproveRejectRequest(BaseModel):
+    rejection_reason: Optional[str] = None
+
+
+@router.post("/approve-action/{ticket_id}")
+async def approve_pending_action(ticket_id: str, agent=Depends(get_current_agent)):
+    """Approve a pending_admin_action ticket — execute the Shopify action and notify customer."""
+    db = get_db()
+    ticket = await db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("status") != "pending_admin_action":
+        raise HTTPException(status_code=400, detail="Ticket is not pending admin action")
+
+    action_type = ticket.get("pending_action_type", "")
+    order_id = ticket.get("pending_action_order_id", "")
+    order_number = ticket.get("pending_action_order_number", "")
+    wa_phone = ticket.get("whatsapp_phone", "")
+    merchant_id = ticket.get("merchant_id")
+
+    now = datetime.now(timezone.utc)
+    shopify_result = None
+    customer_msg = ""
+
+    # Execute the Shopify action
+    if action_type == "cancel" and order_id:
+        try:
+            from app.services.shopify_client import shopify_post as _shopify_post
+            await _shopify_post(f"/orders/{order_id}/cancel.json", {})
+            shopify_result = "cancelled"
+            customer_msg = (
+                f"✅ Your order *#{order_number}* has been successfully cancelled.\n\n"
+                f"If you made a payment, the refund will be processed within 5–7 business days. 💳"
+            )
+        except Exception as e:
+            shopify_result = f"error: {e}"
+            customer_msg = (
+                f"✅ Your cancellation request has been approved!\n\n"
+                f"Our team is processing your order *#{order_number}* now. 🙏"
+            )
+    elif action_type == "refund" and order_id:
+        shopify_result = "refund_approved"
+        customer_msg = (
+            f"🎉 Your *Refund Request* has been approved!\n\n"
+            f"The refund for order *#{order_number}* will reflect in your account within 5–7 business days. 💰"
+        )
+    elif action_type == "replace" and order_id:
+        shopify_result = "replace_approved"
+        customer_msg = (
+            f"🎉 Your *Replacement Request* has been approved!\n\n"
+            f"A replacement for order *#{order_number}* will be shipped shortly. 📦\n"
+            f"Tracking details will be sent to your email."
+        )
+    elif action_type == "return" and order_id:
+        shopify_result = "return_approved"
+        customer_msg = (
+            f"🎉 Your *Return Request* has been approved!\n\n"
+            f"A pickup for order *#{order_number}* is being scheduled. 📦\n"
+            f"Our team will share the pickup details with you shortly."
+        )
+    else:
+        customer_msg = (
+            f"🎉 Your request has been approved and processed successfully!\n\n"
+            f"Our team will be in touch if any further action is needed. 🙏"
+        )
+
+    # Update ticket
+    await db.tickets.update_one(
+        {"id": ticket_id},
+        {"$set": {
+            "status": "resolved",
+            "pending_action_approved_at": now,
+            "updated_at": now,
+        }},
+    )
+
+    # Notify customer via WhatsApp
+    wa_notify_result = None
+    if wa_phone and customer_msg:
+        try:
+            from app.services.whatsapp_service import get_whatsapp_config, send_text_message
+            from app.models.message import MessageInDB
+            config = await get_whatsapp_config(merchant_id)
+            wa_notify_result = await send_text_message(wa_phone, customer_msg, config)
+            msg_list = wa_notify_result.get("messages") or []
+            sent_id = msg_list[0].get("id") if msg_list else None
+            notify_msg = MessageInDB(
+                ticket_id=ticket_id,
+                body=customer_msg,
+                sender_type="agent",
+                sender_id=agent["id"],
+                channel="whatsapp",
+                ai_generated=False,
+                whatsapp_message_id=sent_id,
+                whatsapp_status="sent" if sent_id else "failed",
+            )
+            await db.messages.insert_one(notify_msg.model_dump())
+        except Exception as e:
+            print(f"[approve_action] WhatsApp notify failed: {e}")
+
+    return {
+        "status": "approved",
+        "action_type": action_type,
+        "shopify_result": shopify_result,
+        "customer_notified": wa_notify_result is not None,
+    }
+
+
+@router.post("/reject-action/{ticket_id}")
+async def reject_pending_action(
+    ticket_id: str,
+    body: ApproveRejectRequest,
+    agent=Depends(get_current_agent),
+):
+    """Reject a pending_admin_action ticket and notify the customer."""
+    db = get_db()
+    ticket = await db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("status") != "pending_admin_action":
+        raise HTTPException(status_code=400, detail="Ticket is not pending admin action")
+
+    action_type = ticket.get("pending_action_type", "request")
+    order_number = ticket.get("pending_action_order_number", "")
+    wa_phone = ticket.get("whatsapp_phone", "")
+    merchant_id = ticket.get("merchant_id")
+    rejection_reason = (body.rejection_reason or "").strip()
+    now = datetime.now(timezone.utc)
+
+    type_labels = {
+        "refund": "Refund", "replace": "Replacement",
+        "return": "Return", "cancel": "Cancellation",
+    }
+    label = type_labels.get(action_type, "Request")
+
+    reason_line = f"\n\nReason: _{rejection_reason}_" if rejection_reason else ""
+    customer_msg = (
+        f"Unfortunately, your *{label} Request* was not approved this time. 😔"
+        f"{reason_line}\n\n"
+        f"If you need further assistance, feel free to contact our support team. 🙏"
+    )
+
+    await db.tickets.update_one(
+        {"id": ticket_id},
+        {"$set": {
+            "status": "open",
+            "pending_action_rejected_at": now,
+            "pending_action_rejection_reason": rejection_reason,
+            "updated_at": now,
+        }},
+    )
+
+    if wa_phone and customer_msg:
+        try:
+            from app.services.whatsapp_service import get_whatsapp_config, send_text_message
+            from app.models.message import MessageInDB
+            config = await get_whatsapp_config(merchant_id)
+            wa_result = await send_text_message(wa_phone, customer_msg, config)
+            msg_list = wa_result.get("messages") or []
+            sent_id = msg_list[0].get("id") if msg_list else None
+            notify_msg = MessageInDB(
+                ticket_id=ticket_id,
+                body=customer_msg,
+                sender_type="agent",
+                sender_id=agent["id"],
+                channel="whatsapp",
+                ai_generated=False,
+                whatsapp_message_id=sent_id,
+                whatsapp_status="sent" if sent_id else "failed",
+            )
+            await db.messages.insert_one(notify_msg.model_dump())
+        except Exception as e:
+            print(f"[reject_action] WhatsApp notify failed: {e}")
+
+    return {
+        "status": "rejected",
+        "action_type": action_type,
+        "rejection_reason": rejection_reason,
+    }

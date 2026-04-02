@@ -205,6 +205,8 @@ async def _handle_messages(value: dict):
                 # Formats: cancel_<oid>, refund_<oid>, replace_<oid>, return_<oid>,
                 #          accept_gc_<type>, decline_gc_<type>,
                 #          issue_damaged_<type>, issue_wrong_<type>, issue_missing_<type>
+                # Map button IDs to natural messages the AI can parse
+                # Order action buttons (shown after fetch_order)
                 if btn_id.startswith("refund_"):
                     _oid = btn_id[len("refund_"):]
                     body = f"I want a refund for my order (order_id:{_oid})"
@@ -216,25 +218,144 @@ async def _handle_messages(value: dict):
                     body = f"I want to return my order (order_id:{_oid})"
                 elif btn_id.startswith("cancel_"):
                     _oid = btn_id[len("cancel_"):]
-                    body = f"Please cancel my order (order_id:{_oid})"
+                    body = f"I want to cancel my order (order_id:{_oid})"
+                # Main menu buttons
+                elif btn_id == "menu_cancel":
+                    body = "I want to cancel my order"
+                elif btn_id == "menu_refund":
+                    body = "I want a refund"
+                elif btn_id == "menu_replace":
+                    body = "I want a replacement"
+                elif btn_id == "menu_return":
+                    body = "I want to return my order"
+                elif btn_id == "menu_track_order":
+                    body = "I want to track my order"
+                elif btn_id == "menu_new_order":
+                    body = "I want to place a new order"
+                elif btn_id == "menu_cancel_return":
+                    body = "I want to cancel or return my order"
+                elif btn_id == "menu_support":
+                    body = "I want to talk to a support agent"
+                # Order lookup
+                elif btn_id == "lookup_order_number":
+                    body = "I will provide my order number"
+                elif btn_id == "lookup_email":
+                    body = "I will use my email to look up the order"
+                # Cancel confirmation
+                elif btn_id == "confirm_cancel_yes":
+                    body = "Yes, I want to cancel my order"
+                elif btn_id == "confirm_cancel_no":
+                    body = "No, keep my order, I changed my mind"
+                # Gift card accept/decline
                 elif btn_id.startswith("accept_gc_"):
                     _atype = btn_id[len("accept_gc_"):]
                     body = f"I accept the gift card offer (action_type:{_atype})"
                 elif btn_id.startswith("decline_gc_"):
                     _atype = btn_id[len("decline_gc_"):]
-                    body = f"No, I don't want the gift card, please continue with my {_atype} request"
-                elif btn_id.startswith("issue_damaged_"):
-                    _atype = btn_id[len("issue_damaged_"):]
-                    body = f"The item was damaged (issue:damaged action_type:{_atype})"
-                elif btn_id.startswith("issue_wrong_"):
-                    _atype = btn_id[len("issue_wrong_"):]
-                    body = f"I received the wrong item (issue:wrong_item action_type:{_atype})"
-                elif btn_id.startswith("issue_missing_"):
-                    _atype = btn_id[len("issue_missing_"):]
+                    body = f"No, I don't want the gift card. Please continue with my {_atype} request (action_type:{_atype})"
+                # Reason buttons (reason_<issue>_<action_type>)
+                elif btn_id.startswith("reason_wrong_size_"):
+                    _atype = btn_id[len("reason_wrong_size_"):]
+                    body = f"The wrong size was sent (issue:wrong_size action_type:{_atype})"
+                elif btn_id.startswith("reason_damaged_"):
+                    _atype = btn_id[len("reason_damaged_"):]
+                    body = f"The product is damaged (issue:damaged action_type:{_atype})"
+                elif btn_id.startswith("reason_wrong_"):
+                    _atype = btn_id[len("reason_wrong_"):]
+                    body = f"I received the wrong product (issue:wrong_product action_type:{_atype})"
+                elif btn_id.startswith("reason_quality_"):
+                    _atype = btn_id[len("reason_quality_"):]
+                    body = f"The quality is not as expected (issue:quality action_type:{_atype})"
+                elif btn_id.startswith("reason_delayed_"):
+                    _atype = btn_id[len("reason_delayed_"):]
+                    body = f"My order arrived too late (issue:delayed action_type:{_atype})"
+                elif btn_id.startswith("reason_changed_mind_"):
+                    _atype = btn_id[len("reason_changed_mind_"):]
+                    body = f"I changed my mind (issue:changed_mind action_type:{_atype})"
+                elif btn_id.startswith("reason_missing_"):
+                    _atype = btn_id[len("reason_missing_"):]
                     body = f"An item is missing from my order (issue:missing action_type:{_atype})"
+                elif btn_id.startswith("reason_other_"):
+                    _atype = btn_id[len("reason_other_"):]
+                    body = f"Other reason for {_atype} request (issue:other action_type:{_atype})"
+                # Submit confirmation
+                elif btn_id.startswith("confirm_submit_"):
+                    _atype = btn_id[len("confirm_submit_"):]
+                    if _atype == "no":
+                        body = "No, I don't want to submit the request"
+                    else:
+                        body = f"Yes, please submit my {_atype} request (action_type:{_atype})"
+                # Quantity buttons
+                elif btn_id in ("qty_1", "qty_2", "qty_3"):
+                    body = btn_id.replace("qty_", "")
                 else:
-                    _btn_action, _, _btn_ref = btn_id.partition("_")
+                    _, _, _btn_ref = btn_id.partition("_")
                     body = btn_title + (f" (order {_btn_ref})" if _btn_ref else "")
+            elif interactive_data.get("type") == "list_reply":
+                list_reply = interactive_data.get("list_reply", {})
+                btn_title = list_reply.get("title", "")
+                btn_id = list_reply.get("id", "")
+                # Reuse same button ID mapping as button_reply
+                if btn_id.startswith("refund_"):
+                    _oid = btn_id[len("refund_"):]
+                    body = f"I want a refund for my order (order_id:{_oid})"
+                elif btn_id.startswith("replace_"):
+                    _oid = btn_id[len("replace_"):]
+                    body = f"I want a replacement for my order (order_id:{_oid})"
+                elif btn_id.startswith("return_"):
+                    _oid = btn_id[len("return_"):]
+                    body = f"I want to return my order (order_id:{_oid})"
+                elif btn_id.startswith("cancel_"):
+                    _oid = btn_id[len("cancel_"):]
+                    body = f"I want to cancel my order (order_id:{_oid})"
+                elif btn_id == "menu_cancel":
+                    body = "I want to cancel my order"
+                elif btn_id == "menu_refund":
+                    body = "I want a refund"
+                elif btn_id == "menu_replace":
+                    body = "I want a replacement"
+                elif btn_id == "menu_return":
+                    body = "I want to return my order"
+                elif btn_id == "menu_support":
+                    body = "I want to talk to a support agent"
+                elif btn_id.startswith("accept_gc_"):
+                    _atype = btn_id[len("accept_gc_"):]
+                    body = f"I accept the gift card offer (action_type:{_atype})"
+                elif btn_id.startswith("decline_gc_"):
+                    _atype = btn_id[len("decline_gc_"):]
+                    body = f"No, I don't want the gift card. Please continue with my {_atype} request (action_type:{_atype})"
+                elif btn_id.startswith("reason_wrong_size_"):
+                    _atype = btn_id[len("reason_wrong_size_"):]
+                    body = f"The wrong size was sent (issue:wrong_size action_type:{_atype})"
+                elif btn_id.startswith("reason_damaged_"):
+                    _atype = btn_id[len("reason_damaged_"):]
+                    body = f"The product is damaged (issue:damaged action_type:{_atype})"
+                elif btn_id.startswith("reason_wrong_"):
+                    _atype = btn_id[len("reason_wrong_"):]
+                    body = f"I received the wrong product (issue:wrong_product action_type:{_atype})"
+                elif btn_id.startswith("reason_quality_"):
+                    _atype = btn_id[len("reason_quality_"):]
+                    body = f"The quality is not as expected (issue:quality action_type:{_atype})"
+                elif btn_id.startswith("reason_delayed_"):
+                    _atype = btn_id[len("reason_delayed_"):]
+                    body = f"My order arrived too late (issue:delayed action_type:{_atype})"
+                elif btn_id.startswith("reason_changed_mind_"):
+                    _atype = btn_id[len("reason_changed_mind_"):]
+                    body = f"I changed my mind (issue:changed_mind action_type:{_atype})"
+                elif btn_id.startswith("reason_missing_"):
+                    _atype = btn_id[len("reason_missing_"):]
+                    body = f"An item is missing from my order (issue:missing action_type:{_atype})"
+                elif btn_id.startswith("reason_other_"):
+                    _atype = btn_id[len("reason_other_"):]
+                    body = f"Other reason for {_atype} request (issue:other action_type:{_atype})"
+                elif btn_id.startswith("confirm_submit_"):
+                    _atype = btn_id[len("confirm_submit_"):]
+                    if _atype == "no":
+                        body = "No, I don't want to submit the request"
+                    else:
+                        body = f"Yes, please submit my {_atype} request (action_type:{_atype})"
+                else:
+                    body = btn_title or f"[List reply: {btn_id}]"
             else:
                 body = f"[Interactive message received]"
         else:
