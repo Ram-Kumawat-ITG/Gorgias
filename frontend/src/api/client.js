@@ -6,6 +6,26 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Attach JWT token to every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// Auto-redirect to login on 401
+api.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('agent');
+      window.location.href = '/login';
+    }
+    return Promise.reject(err);
+  }
+);
+
 export const ticketsApi = {
   list: (params) => api.get('/tickets', { params }),
   get: (id) => api.get(`/tickets/${id}`),
@@ -16,10 +36,9 @@ export const ticketsApi = {
 }
 
 export const authApi = {
-  // auth endpoints removed
-  login: () => Promise.reject(new Error('auth removed')),
-  me: () => Promise.reject(new Error('auth removed')),
-  register: () => Promise.reject(new Error('auth removed')),
+  login: (email, password) => api.post('/auth/login', { email, password }),
+  me: () => api.get('/auth/me'),
+  register: (data) => api.post('/auth/signup', data),
 }
 
 export const shopifyApi = {
@@ -30,6 +49,8 @@ export const shopifyApi = {
 export const aiApi = {
   analyze: (data) => api.post('/ai/analyze', data),
   processTicket: (ticketId) => api.post(`/ai/process-ticket/${ticketId}`),
+  approveAction: (ticketId) => api.post(`/ai/approve-action/${ticketId}`),
+  rejectAction: (ticketId) => api.post(`/ai/reject-action/${ticketId}`),
 }
 
 export const channelsApi = {

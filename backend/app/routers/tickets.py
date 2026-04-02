@@ -28,8 +28,8 @@ async def list_tickets(
     query = {}
     if status:
         if status == 'active':
-            # Default inbox view — open + pending (excludes resolved/closed)
-            query["status"] = {"$in": ["open", "pending"]}
+            # Default inbox view — open + pending + pending_admin_action (excludes resolved/closed)
+            query["status"] = {"$in": ["open", "pending", "pending_admin_action"]}
         elif ',' in status:
             query["status"] = {"$in": status.split(',')}
         else:

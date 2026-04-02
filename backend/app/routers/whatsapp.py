@@ -1,5 +1,5 @@
 # WhatsApp webhook router — handles Meta webhook verification and inbound messages
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Request, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from app.config import settings
 from app.database import get_db
@@ -8,6 +8,10 @@ from app.services.whatsapp_service import (
     get_whatsapp_config,
     mark_as_read,
     download_media,
+    send_text_message,
+    send_interactive_buttons,
+    send_image_with_buttons,
+    send_media_message,
 )
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp"])
@@ -80,7 +84,7 @@ async def test_connection(request: Request):
 
 
 @router.post("")
-async def receive_webhook(request: Request):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     """Receive inbound WhatsApp messages and status updates from Meta."""
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
@@ -123,21 +127,30 @@ async def receive_webhook(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Meta sends webhook data in entry[].changes[].value
-    entries = payload.get("entry", [])
-    for entry in entries:
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-
-            # Handle incoming messages
-            if "messages" in value:
-                await _handle_messages(value)
-
-            # Handle message status updates (sent/delivered/read)
-            if "statuses" in value:
-                await _handle_statuses(value)
-
+    # Queue processing as a background task — return 200 to Meta immediately
+    background_tasks.add_task(_process_webhook_payload, payload)
     return {"status": "ok"}
+
+
+async def _process_webhook_payload(payload: dict):
+    """Process a webhook payload in the background after returning 200 to Meta."""
+    try:
+        entries = payload.get("entry", [])
+        for entry in entries:
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+                if "messages" in value:
+                    try:
+                        await _handle_messages(value)
+                    except Exception as e:
+                        print(f"[WhatsApp] _handle_messages error: {e}")
+                if "statuses" in value:
+                    try:
+                        await _handle_statuses(value)
+                    except Exception as e:
+                        print(f"[WhatsApp] _handle_statuses error: {e}")
+    except Exception as e:
+        print(f"[WhatsApp] _process_webhook_payload error: {e}")
 
 
 async def _handle_messages(value: dict):
@@ -188,10 +201,40 @@ async def _handle_messages(value: dict):
                 btn_reply = interactive_data.get("button_reply", {})
                 btn_title = btn_reply.get("title", "")
                 btn_id = btn_reply.get("id", "")
-                # Encode action context into body so AI understands with conversation history
-                # btn_id format: "cancel_<order_id>", "refund_<order_id>", etc.
-                _btn_action, _, _btn_ref = btn_id.partition("_")
-                body = btn_title + (f" (order {_btn_ref})" if _btn_ref else "")
+                # Map button IDs to natural-language bodies the AI can parse
+                # Formats: cancel_<oid>, refund_<oid>, replace_<oid>, return_<oid>,
+                #          accept_gc_<type>, decline_gc_<type>,
+                #          issue_damaged_<type>, issue_wrong_<type>, issue_missing_<type>
+                if btn_id.startswith("refund_"):
+                    _oid = btn_id[len("refund_"):]
+                    body = f"I want a refund for my order (order_id:{_oid})"
+                elif btn_id.startswith("replace_"):
+                    _oid = btn_id[len("replace_"):]
+                    body = f"I want a replacement for my order (order_id:{_oid})"
+                elif btn_id.startswith("return_"):
+                    _oid = btn_id[len("return_"):]
+                    body = f"I want to return my order (order_id:{_oid})"
+                elif btn_id.startswith("cancel_"):
+                    _oid = btn_id[len("cancel_"):]
+                    body = f"Please cancel my order (order_id:{_oid})"
+                elif btn_id.startswith("accept_gc_"):
+                    _atype = btn_id[len("accept_gc_"):]
+                    body = f"I accept the gift card offer (action_type:{_atype})"
+                elif btn_id.startswith("decline_gc_"):
+                    _atype = btn_id[len("decline_gc_"):]
+                    body = f"No, I don't want the gift card, please continue with my {_atype} request"
+                elif btn_id.startswith("issue_damaged_"):
+                    _atype = btn_id[len("issue_damaged_"):]
+                    body = f"The item was damaged (issue:damaged action_type:{_atype})"
+                elif btn_id.startswith("issue_wrong_"):
+                    _atype = btn_id[len("issue_wrong_"):]
+                    body = f"I received the wrong item (issue:wrong_item action_type:{_atype})"
+                elif btn_id.startswith("issue_missing_"):
+                    _atype = btn_id[len("issue_missing_"):]
+                    body = f"An item is missing from my order (issue:missing action_type:{_atype})"
+                else:
+                    _btn_action, _, _btn_ref = btn_id.partition("_")
+                    body = btn_title + (f" (order {_btn_ref})" if _btn_ref else "")
             else:
                 body = f"[Interactive message received]"
         else:
@@ -275,12 +318,11 @@ async def _handle_messages(value: dict):
         if body:
             try:
                 from app.services.whatsapp_ai_agent import process_whatsapp_message
-                from app.services.whatsapp_service import send_text_message
                 from app.models.message import MessageInDB as _MsgInDB
 
                 ticket_id = ticket_doc.get("id", "")
                 if ticket_id:
-                    ai_reply = await process_whatsapp_message(
+                    ai_result = await process_whatsapp_message(
                         ticket_id=ticket_id,
                         phone_number_id=phone_number_id,
                         customer_phone=from_phone,
@@ -288,9 +330,25 @@ async def _handle_messages(value: dict):
                         merchant_id=merchant_id,
                         customer_name=contact_name,
                     )
-                    if ai_reply:
+                    if ai_result:
                         wa_config = await get_whatsapp_config(merchant_id)
-                        wa_result = await send_text_message(from_phone, ai_reply, wa_config)
+                        # ai_result is {"reply": str, "buttons": list, "image_url": str}
+                        reply_text = (ai_result.get("reply", "") if isinstance(ai_result, dict) else str(ai_result)).strip()
+                        buttons    = (ai_result.get("buttons") or []) if isinstance(ai_result, dict) else []
+                        image_url  = (ai_result.get("image_url") or "") if isinstance(ai_result, dict) else ""
+
+                        if not reply_text:
+                            continue
+
+                        if image_url and buttons:
+                            wa_result = await send_image_with_buttons(from_phone, image_url, reply_text, buttons, wa_config)
+                        elif image_url:
+                            wa_result = await send_media_message(from_phone, "image", image_url, reply_text, wa_config)
+                        elif buttons:
+                            wa_result = await send_interactive_buttons(from_phone, reply_text, buttons, wa_config)
+                        else:
+                            wa_result = await send_text_message(from_phone, reply_text, wa_config)
+
                         messages_list = wa_result.get("messages") or []
                         sent_id = messages_list[0].get("id") if messages_list else None
                         wa_status = "sent" if sent_id else "failed"
@@ -305,7 +363,7 @@ async def _handle_messages(value: dict):
                             )
                         reply_msg = _MsgInDB(
                             ticket_id=ticket_id,
-                            body=ai_reply,
+                            body=reply_text,
                             sender_type="agent",
                             channel="whatsapp",
                             ai_generated=True,
