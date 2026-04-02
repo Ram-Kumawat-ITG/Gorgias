@@ -60,4 +60,24 @@ async def inbound_email(request: Request):
         body=body.strip(),
         merchant_id=merchant_id,
     )
+
+    # Auto-reply using AI agent
+    try:
+        from app.services.email_ai_agent import process_email_message
+        from app.services.mailgun_service import send_reply_email
+        reply = await process_email_message(
+            ticket_id=ticket.get("id"),
+            customer_email=sender,
+            current_message=body.strip(),
+        )
+        if reply:
+            await send_reply_email(
+                to=sender,
+                subject=f"Re: {subject}",
+                body=reply,
+                ticket_id=ticket.get("id"),
+            )
+    except Exception as e:
+        print(f"Email auto-reply error: {e}")
+
     return {"status": "received", "ticket_id": ticket.get("id")}

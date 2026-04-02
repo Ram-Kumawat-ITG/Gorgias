@@ -412,18 +412,18 @@ export default function RequestPage() {
   //   • WhatsApp tickets → call processTicket (executes Shopify + sends WA reply + saves to DB)
   //   • Other channels  → call analyze (suggestions only, no auto-send)
   //   Triggers on first load and whenever a new customer message arrives
+  // AI processing — ONLY runs when a NEW customer message arrives while viewing
+  // Does NOT auto-run on ticket open (prevents unnecessary API calls)
   useEffect(() => {
     if (!selectedTicket || !messages.length || aiLoading) return
 
     const lastMsg = messages[messages.length - 1]
     const isNewCustomerMsg =
       messages.length > prevMsgCountRef.current && lastMsg?.sender === 'customer'
-    const isFirstLoad = autoAnalyzedForRef.current !== selectedId
 
     prevMsgCountRef.current = messages.length
 
-    if (!isFirstLoad && !isNewCustomerMsg) return
-    autoAnalyzedForRef.current = selectedId
+    if (!isNewCustomerMsg) return
 
     if (selectedTicket.channel === 'whatsapp') {
       handleProcessTicket()

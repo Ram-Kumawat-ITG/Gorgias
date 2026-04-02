@@ -149,6 +149,82 @@ async def update_ticket(ticket_id: str, data: TicketUpdate, agent=Depends(get_cu
         new_status = updates["status"]
         if new_status == "resolved" and old_status != "resolved":
             updates["resolved_at"] = datetime.utcnow()
+
+            # If this is a cancel_requested ticket, trigger Shopify order cancellation
+            if ticket.get("ticket_type") == "cancel_requested" and ticket.get("cancel_requested_order_id"):
+                try:
+                    from app.services.order_service import cancel_order
+                    order_id = ticket["cancel_requested_order_id"]
+                    cancel_result = await cancel_order(order_id)
+                    if cancel_result:
+                        await log_activity(
+                            entity_type="order",
+                            entity_id=order_id,
+                            event="order.cancelled",
+                            actor_type="agent",
+                            actor_id=agent["id"],
+                            actor_name=agent["full_name"],
+                            description=f"Order {order_id} cancelled via Shopify (ticket resolved)",
+                            customer_email=ticket.get("customer_email"),
+                        )
+                        # Notify customer about successful cancellation
+                        customer_email = ticket.get("customer_email", "")
+                        channel = ticket.get("channel", "email")
+                        cancel_notify_msg = (
+                            "Your order has been successfully cancelled. "
+                            "If you have any questions, feel free to reach out to us."
+                        )
+                        if channel == "whatsapp":
+                            cancel_notify_msg = (
+                                "Your order has been successfully cancelled. ✅\n"
+                                "If you need anything else, feel free to reach out! 🙏"
+                            )
+                            try:
+                                from app.services.whatsapp_service import get_whatsapp_config, send_text_message as wa_send
+                                wa_phone = ticket.get("whatsapp_phone")
+                                if wa_phone:
+                                    wa_cfg = await get_whatsapp_config(ticket.get("merchant_id"))
+                                    await wa_send(wa_phone, cancel_notify_msg, wa_cfg)
+                            except Exception as e:
+                                print(f"WhatsApp cancel notification error: {e}")
+                        elif channel == "instagram":
+                            cancel_notify_msg = (
+                                "Your order has been successfully cancelled! ✅ "
+                                "Let us know if you need anything else."
+                            )
+                            try:
+                                from app.services.instagram_service import get_instagram_config, send_text_message as ig_send
+                                ig_user_id = ticket.get("instagram_user_id")
+                                if ig_user_id:
+                                    ig_cfg = await get_instagram_config(ticket.get("merchant_id"))
+                                    await ig_send(ig_user_id, cancel_notify_msg, ig_cfg)
+                            except Exception as e:
+                                print(f"Instagram cancel notification error: {e}")
+                        else:  # email
+                            try:
+                                from app.services.mailgun_service import send_reply_email
+                                await send_reply_email(
+                                    to=customer_email,
+                                    subject=f"Re: {ticket.get('subject', 'Order Cancellation')}",
+                                    body=cancel_notify_msg,
+                                    ticket_id=ticket_id,
+                                )
+                            except Exception as e:
+                                print(f"Email cancel notification error: {e}")
+
+                        # Save notification as message in ticket thread
+                        notify_msg = MessageInDB(
+                            ticket_id=ticket_id,
+                            body=cancel_notify_msg,
+                            sender_type="agent",
+                            channel=channel,
+                        )
+                        await db.messages.insert_one(notify_msg.model_dump())
+                    else:
+                        print(f"Failed to cancel order {order_id} on Shopify")
+                except Exception as e:
+                    print(f"Order cancellation on ticket resolve error: {e}")
+
         if old_status != new_status:
             await log_activity(
                 entity_type="ticket",

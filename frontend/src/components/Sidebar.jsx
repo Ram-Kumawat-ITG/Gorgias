@@ -1,17 +1,18 @@
 // Left navigation sidebar — links to all sections + agent info
 import { NavLink } from 'react-router-dom';
-import { 
-  Inbox, 
-  Users, 
-  ShoppingBag, 
-  BarChart3, 
-  Zap, 
-  Bot, 
-  Shield, 
-  LogOut, 
-  FileText, 
+import {
+  Inbox,
+  Users,
+  ShoppingBag,
+  BarChart3,
+  Zap,
+  Bot,
+  Shield,
+  LogOut,
+  FileText,
   RotateCcw,
-  Mail 
+  Mail,
+  Gift
 } from 'lucide-react';
 
 function WhatsAppIcon({ size = 18 }) {
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
   { to: '/macros', icon: Bot, label: 'Macros' },
   { to: '/automations', icon: Zap, label: 'Automations' },
   { to: '/requests', icon: FileText, label: 'Requests' },
+  { to: '/gift-cards', icon: Gift, label: 'Gift Cards' },
   { to: '/whatsapp-settings', icon: WhatsAppIcon, label: 'WhatsApp' },
   { to: '/instagram-settings', icon: InstagramIcon, label: 'Instagram' },
   { to: '/email-settings', icon: Mail, label: 'Email' },

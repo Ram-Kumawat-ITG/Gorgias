@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(find /c/Gorgias/shopify-helpdesk -name .env* -type f)",
-      "Bash(grep -E \"\\\\.js$|\\\\.config\")"
+      "Bash(grep -E \"\\\\.js$|\\\\.config\")",
+      "Bash(find /c/Gorgias/shopify-helpdesk/frontend -type f \\\\\\(-name *instagram* -o -name *Instagram* \\\\\\))",
+      "Bash(python -c \":*)",
+      "Bash(npx -y acorn-jsx --ecma2020 src/pages/GiftCardPage.jsx)",
+      "Bash(venv/Scripts/python -c \":*)"
     ]
   }
 }

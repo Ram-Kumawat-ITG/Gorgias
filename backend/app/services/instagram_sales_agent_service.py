@@ -35,7 +35,6 @@ Detect the customer's primary intent:
 - purchase_intent: wants to buy something
 - create_order: confirmed purchase with product + email
 - cancel_order: wants to cancel an existing order
-- update_order: wants to modify an order
 - order_status: wants to track/check order status
 - support: general support question
 - ask_email: email not yet provided, must ask for it
@@ -66,7 +65,7 @@ When user asks about products:
 ## RESPONSE FORMAT (STRICT JSON)
 {
   "summary": "1-2 line summary of what the customer needs",
-  "intent": "product_inquiry | purchase_intent | create_order | cancel_order | update_order | order_status | support | ask_email",
+  "intent": "product_inquiry | purchase_intent | create_order | cancel_order | order_status | support | ask_email",
   "message": "Instagram-style conversational reply to send to the customer",
   "actions": [
     {
@@ -78,6 +77,11 @@ When user asks about products:
   "email": "extracted email address or empty string",
   "confidence": 0.0 to 1.0
 }
+
+## CANCEL ORDERS
+- When a customer wants to cancel, set action type "cancel_order" immediately.
+- Do NOT ask "should I cancel?" or confirm with the customer yourself.
+- The system handles the retention offer and confirmation automatically.
 
 ## RULES
 - Output ONLY valid JSON. No text outside the JSON.
@@ -264,14 +268,13 @@ async def _execute_actions(actions: list, email: str) -> dict:
         elif action_type == "cancel_order":
             order_id = payload.get("order_id", "")
             action_email = payload.get("email", "") or email
-            if order_id:
-                result = await _shopify_cancel_order(order_id)
-                context["cancel_result"] = result
-            elif action_email:
-                # Look up order by email first
-                orders = await _shopify_get_orders(action_email)
-                context["orders"] = orders
-                context["cancel_result"] = {"success": False, "error": "Order ID needed — orders listed above"}
+            # Use retention flow instead of direct cancel
+            context["cancel_result"] = {
+                "success": False,
+                "retention": True,
+                "order_id": order_id,
+                "email": action_email,
+            }
 
         elif action_type == "create_order":
             action_email = payload.get("email", "") or email
@@ -465,6 +468,65 @@ async def process_instagram_message(
 
     if actions and resolved_email and not requires_email:
         shopify_context = await _execute_actions(actions, resolved_email)
+
+    # ── 6b. Handle retention flow for cancel requests ────────────────────────
+    cancel_result = shopify_context.get("cancel_result", {})
+    if cancel_result.get("retention"):
+        try:
+            from app.services.retention_service import (
+                check_retention_attempted, check_awaiting_cancel_confirm,
+                create_or_update_cancel_ticket, create_retention_gift_card,
+                get_retention_offer_message, mark_retention_offered,
+                detect_retention_response, process_retention_response,
+                process_cancel_confirmation,
+            )
+            from app.models.message import MessageInDB
+            order_id = cancel_result.get("order_id", "")
+
+            # State 3: Awaiting final "are you sure?" confirmation
+            awaiting_confirm = await check_awaiting_cancel_confirm(ticket_id)
+            if awaiting_confirm:
+                response = detect_retention_response(message_body)
+                confirmed = response == "yes_cancel"
+                reply = await process_cancel_confirmation(ticket_id, confirmed, "instagram")
+                agent_msg = MessageInDB(
+                    ticket_id=ticket_id, body=reply, sender_type="ai",
+                    channel="instagram", instagram_sender_igsid=igsid, ai_generated=True,
+                )
+                await db.messages.insert_one(agent_msg.model_dump())
+                return reply
+
+            # State 1: First cancel — create gift card + send retention offer
+            already_offered = await check_retention_attempted(ticket_id)
+            if not already_offered:
+                await create_or_update_cancel_ticket(resolved_email, order_id, "instagram", ticket_id)
+                gc = await create_retention_gift_card(resolved_email, "instagram", ticket_id)
+                await mark_retention_offered(ticket_id)
+                if gc and gc.get("code"):
+                    retention_msg = get_retention_offer_message("instagram", gc["code"], gc["balance"], gc.get("currency", "INR"))
+                else:
+                    retention_msg = get_retention_offer_message("instagram", "N/A", str(500), "INR")
+                agent_msg = MessageInDB(
+                    ticket_id=ticket_id, body=retention_msg, sender_type="ai",
+                    channel="instagram", instagram_sender_igsid=igsid, ai_generated=True,
+                )
+                await db.messages.insert_one(agent_msg.model_dump())
+                if resolved_email and resolved_email != current_email:
+                    await db.tickets.update_one({"id": ticket_id}, {"$set": {"customer_email": resolved_email}})
+                return retention_msg
+
+            # State 2: Retention offered — check OK/CANCEL response
+            response = detect_retention_response(message_body)
+            if response in ("yes_cancel", "no_keep"):
+                reply = await process_retention_response(ticket_id, response, "instagram")
+                agent_msg = MessageInDB(
+                    ticket_id=ticket_id, body=reply, sender_type="ai",
+                    channel="instagram", instagram_sender_igsid=igsid, ai_generated=True,
+                )
+                await db.messages.insert_one(agent_msg.model_dump())
+                return reply
+        except Exception as e:
+            print(f"Instagram retention error: {e}")
 
     # ── 7. If Shopify data was fetched, call LLM again for final reply ────────
     reply_text = llm_result.get("message", "")

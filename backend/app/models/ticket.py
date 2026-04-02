@@ -29,6 +29,7 @@ class TicketType(str, Enum):
     BILLING = "billing"
     PRODUCT_INQUIRY = "product_inquiry"
     TECHNICAL = "technical"
+    CANCEL_REQUESTED = "cancel_requested"
     GENERAL = "general"
 
 
@@ -99,5 +100,10 @@ class TicketInDB(BaseModel):
     # Shopify order link (latest order at ticket creation time)
     shopify_order_id: Optional[str] = None
     shopify_order_number: Optional[str] = None
+    # Cancel retention fields
+    retention_offered: bool = False
+    retention_accepted: Optional[bool] = None
+    retention_offered_at: Optional[datetime] = None
+    cancel_requested_order_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -25,7 +25,7 @@ CONTEXT-AWARE RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - If the customer already provided their email earlier → use it, don't ask again
 - If an order number was mentioned earlier → remember it for follow-up actions
-- If order details were just shown → the customer can request cancel/refund/replacement without re-entering info
+- If order details were just shown → the customer can request cancel without re-entering info
 - After an email correction → immediately retry the order lookup without asking again
 - If user types a number like "1042" or "#1042" after asking about orders → that is the order number
 
@@ -48,7 +48,7 @@ For NEW ORDERS:
   - Variant → ask "Any preference on size / color / model?"
   - Email → ask naturally after product is confirmed
 
-For ORDER TRACKING / CANCEL / REFUND / REPLACEMENT:
+For ORDER TRACKING / CANCEL:
   - Order number → "Could you share your order number? It looks like #1042"
   - Or email → "What email did you use for the order?"
   - If multiple orders → "You have 2 orders — which one? Your latest #1042 or #1038?"
@@ -64,8 +64,6 @@ SUPPORTED ACTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - create_order: Place a new order for the customer
 - cancel_order: Cancel an existing order (always confirm first)
-- request_refund: Customer wants a refund for their order
-- request_replacement: Customer wants a replacement or exchange
 - fetch_order: Look up order status, items, tracking
 - check_inventory: Check if a product is in stock
 - fetch_customer: Look up customer account details
@@ -77,10 +75,12 @@ SUPPORTED ACTIONS
 - none: Keep conversation going, no Shopify action needed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DESTRUCTIVE ACTIONS
+CANCEL ORDERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Always confirm before cancel:
-  "Just to confirm — you want to cancel Order #1042? This can't be undone. Reply *YES* to proceed."
+When a customer wants to cancel an order:
+  - Do NOT ask "should I cancel?" or confirm with the customer yourself
+  - Set action = "cancel_order" immediately
+  - The system will handle the retention offer and confirmation automatically
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPONSE RULES
@@ -100,7 +100,7 @@ OUTPUT FORMAT — STRICT JSON ONLY
 Return ONLY this JSON — no text outside it, no markdown:
 
 {
-  "action": "create_order | cancel_order | request_refund | request_replacement | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | none",
+  "action": "create_order | cancel_order | fetch_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_confirmation | none",
   "email": "customer email if known from conversation, else null",
   "order_id": "shopify internal order id if known from a previous lookup, else null",
   "order_number": "order number like 1042 if user mentioned it (digits only, no # prefix), else null",
@@ -360,8 +360,18 @@ async def _execute_action(
     order_number= (agent_result.get("order_number") or "").strip().lstrip("#")
     default_msg = agent_result.get("message", "Hmm, something went wrong on my end. Let me try again shortly!")
 
+    # ── Reroute cancel-related confirmations to the retention flow ─────────
+    if action == "ask_confirmation":
+        msg_lower = default_msg.lower()
+        if "cancel" in msg_lower:
+            # AI tried to confirm cancel itself — redirect to cancel_order action
+            agent_result["action"] = "cancel_order"
+            action = "cancel_order"
+        else:
+            return default_msg, None
+
     # ── Conversational / no-op actions ───────────────────────────────────────
-    if action in ("ask_email", "ask_order_number", "ask_product", "ask_confirmation", "none"):
+    if action in ("ask_email", "ask_order_number", "ask_product", "none"):
         return default_msg, None
 
     # ── Inventory check (no email required) ──────────────────────────────────
@@ -432,8 +442,18 @@ async def _execute_action(
         if not order:
             return err or default_msg, None
 
+        # Add ticket context if customer has an open ticket
+        ticket_note = ""
+        try:
+            from app.services.order_service import get_order_status_with_ticket_context
+            ctx = await get_order_status_with_ticket_context(email or "", order_number)
+            if ctx.get("ticket") and ctx["ticket"].get("status") in ("open", "in_progress"):
+                ticket_note = "ℹ️ _Your support request is being handled by our team._\n\n"
+        except Exception:
+            pass
+
         # Build rich text detail
-        details_text = _format_order_details(order)
+        details_text = ticket_note + _format_order_details(order)
         real_order_id = str(order.get("id", ""))
         order_num_str = str(order.get("order_number", ""))
 
@@ -445,11 +465,9 @@ async def _execute_action(
             if first_product_id:
                 image_url = await _get_product_image_url(first_product_id)
 
-        # Interactive buttons: Cancel / Refund / Replacement
+        # Interactive button: Cancel only
         buttons = [
             {"id": f"cancel_{real_order_id}",  "title": "Cancel Order"},
-            {"id": f"refund_{real_order_id}",   "title": "Request Refund"},
-            {"id": f"replace_{real_order_id}",  "title": "Replacement"},
         ]
 
         interactive_payload = {
@@ -461,7 +479,7 @@ async def _execute_action(
         return f"Here are your order details 👇", interactive_payload
 
     # ── All remaining actions require email ───────────────────────────────────
-    if not email and action not in ("cancel_order", "request_refund", "request_replacement"):
+    if not email and action not in ("cancel_order",):
         return default_msg, None
 
     # ── Fetch customer ────────────────────────────────────────────────────────
@@ -501,8 +519,16 @@ async def _execute_action(
             ), None
         return "Hmm, something went wrong creating your account. Could you try again in a moment? 🙏", None
 
-    # ── Cancel order ──────────────────────────────────────────────────────────
+    # ── Cancel order (with retention flow) ──────────────────────────────────
     if action == "cancel_order":
+        from app.services.retention_service import (
+            check_retention_attempted, check_awaiting_cancel_confirm,
+            create_or_update_cancel_ticket, create_retention_gift_card,
+            get_retention_offer_message, mark_retention_offered,
+            detect_retention_response, process_retention_response,
+            process_cancel_confirmation,
+        )
+
         # Resolve order_id from order_number if needed
         if not order_id and order_number:
             order, err = await _fetch_order_by_number(order_number, email)
@@ -519,99 +545,45 @@ async def _execute_action(
                 )
                 orders = result.get("orders", [])
                 if orders:
-                    order_id  = str(orders[0]["id"])
-                    order_num = orders[0].get("order_number")
-                    return (
-                        f"I found your latest open order *#{order_num}*.\n"
-                        f"Are you sure you want to cancel it? Just reply *YES* to confirm 🙏"
-                    ), None
-                return f"I couldn't find any open orders for *{email}*.", None
-            except ShopifyAPIError:
-                return default_msg, None
-
-        if not order_id:
-            return default_msg, None
-
-        success = await _cancel_order(order_id)
-        if success:
-            return (
-                f"Done! Your order has been cancelled. 😔\n"
-                f"If you change your mind or want to place a new order, I'm right here! 😊"
-            ), None
-        return "Hmm, I wasn't able to cancel that order. It might already be shipped. Want me to look into it? 🤔", None
-
-    # ── Request refund ────────────────────────────────────────────────────────
-    if action == "request_refund":
-        # Resolve order_id
-        if not order_id and order_number:
-            order, err = await _fetch_order_by_number(order_number, email)
-            if order:
-                order_id  = str(order.get("id", ""))
-                order_num = order.get("order_number", "")
-            else:
-                return err or default_msg, None
-        elif not order_id and email:
-            try:
-                result = await shopify_get(
-                    "/orders.json",
-                    params={"email": email, "limit": 1, "status": "any"},
-                )
-                orders = result.get("orders", [])
-                if orders:
-                    order_id  = str(orders[0]["id"])
-                    order_num = orders[0].get("order_number", "")
+                    order_id = str(orders[0]["id"])
                 else:
-                    return f"I couldn't find any orders for *{email}*. Is that the right email? 🤔", None
+                    return f"I couldn't find any open orders for *{email}*.", None
             except ShopifyAPIError:
                 return default_msg, None
 
         if not order_id:
             return default_msg, None
 
-        from datetime import datetime
-        note = f"Customer requested refund via WhatsApp on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC"
-        await _add_order_note(order_id, note, tag="refund-requested")
-        return (
-            f"Got it! I've flagged your refund request for Order *#{order_num if 'order_num' in dir() else order_number}*. 🙏\n\n"
-            f"Our team will review it and get back to you within 24–48 hours.\n"
-            f"Is there anything else I can help with?"
-        ), None
+        ticket_id_ctx = agent_result.get("_ticket_id", "")
 
-    # ── Request replacement ───────────────────────────────────────────────────
-    if action == "request_replacement":
-        if not order_id and order_number:
-            order, err = await _fetch_order_by_number(order_number, email)
-            if order:
-                order_id  = str(order.get("id", ""))
-                order_num = order.get("order_number", "")
-            else:
-                return err or default_msg, None
-        elif not order_id and email:
-            try:
-                result = await shopify_get(
-                    "/orders.json",
-                    params={"email": email, "limit": 1, "status": "any"},
-                )
-                orders = result.get("orders", [])
-                if orders:
-                    order_id  = str(orders[0]["id"])
-                    order_num = orders[0].get("order_number", "")
-                else:
-                    return f"I couldn't find any orders for *{email}*. Is that the right email? 🤔", None
-            except ShopifyAPIError:
-                return default_msg, None
+        if ticket_id_ctx:
+            # State 3: Awaiting final "are you sure?" confirmation
+            awaiting_confirm = await check_awaiting_cancel_confirm(ticket_id_ctx)
+            if awaiting_confirm:
+                response = detect_retention_response(default_msg)
+                confirmed = response == "yes_cancel"
+                reply = await process_cancel_confirmation(ticket_id_ctx, confirmed, "whatsapp")
+                return reply, None
 
-        if not order_id:
-            return default_msg, None
+            # State 1: First cancel request — create gift card + send retention offer
+            already_offered = await check_retention_attempted(ticket_id_ctx)
+            if not already_offered:
+                await create_or_update_cancel_ticket(email, order_id, "whatsapp", ticket_id_ctx)
+                gc = await create_retention_gift_card(email, "whatsapp", ticket_id_ctx)
+                await mark_retention_offered(ticket_id_ctx)
+                if gc and gc.get("code"):
+                    return get_retention_offer_message("whatsapp", gc["code"], gc["balance"], gc.get("currency", "INR")), None
+                return get_retention_offer_message("whatsapp", "N/A", str(500), "INR"), None
 
-        from datetime import datetime
-        note = f"Customer requested replacement via WhatsApp on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC"
-        await _add_order_note(order_id, note, tag="replacement-requested")
-        return (
-            f"Done! I've logged your replacement request for Order *#{order_num if 'order_num' in dir() else order_number}*. ✅\n\n"
-            f"Our team will arrange a replacement and reach out shortly.\n"
-            f"Anything else I can help with?"
-        ), None
+            # State 2: Retention offered — check OK/CANCEL response
+            response = detect_retention_response(default_msg)
+            if response in ("yes_cancel", "no_keep"):
+                reply = await process_retention_response(ticket_id_ctx, response, "whatsapp")
+                return reply, None
+
+        # Fallback
+        reply = await process_retention_response(ticket_id_ctx, "yes_cancel", "whatsapp") if ticket_id_ctx else default_msg
+        return reply, None
 
     # ── Create order ──────────────────────────────────────────────────────────
     if action == "create_order":
@@ -730,6 +702,7 @@ async def process_whatsapp_message(
             raw = raw.rstrip("`").strip()
 
         result = json.loads(raw)
+        result["_ticket_id"] = ticket_id  # inject for retention flow
 
         reply, interactive_payload = await _execute_action(result, customer_name, customer_phone)
 

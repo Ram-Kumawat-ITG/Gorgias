@@ -69,5 +69,7 @@ async def create_indexes():
     await d.merchants.create_index([("instagram_page_id", 1)])
     await d.tickets.create_index([("shopify_order_id", 1)])
     await d.tickets.create_index([("shopify_order_number", 1)])
-    # Twitter integration removed — no twitter-specific indexes
+    # Gift cards
+    await d.gift_cards.create_index([("customer_email", 1)])
+    await d.gift_cards.create_index([("shopify_gift_card_id", 1)])
     print("Indexes created")
