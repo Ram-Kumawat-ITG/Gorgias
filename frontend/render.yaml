@@ -2,8 +2,12 @@ services:
   - type: web
     name: helpdesk-frontend
     runtime: static
+    rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://gorgias.onrender.com
     routes:
       - type: rewrite
         source: /*
