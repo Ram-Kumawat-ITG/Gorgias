@@ -831,7 +831,55 @@ export default function RequestPage() {
                         {new Date(m.time).toLocaleString()}
                       </span>
                     </div>
-                    <p className="text-gray-800 whitespace-pre-wrap">{m.message}</p>
+                    {/* Hide placeholder body like "[image received]" when media is present */}
+                    {(() => {
+                      const hasMedia = (m.whatsapp_media_url || m.whatsapp_media_id) &&
+                        ['image', 'video', 'image/', 'video/'].some(t => (m.whatsapp_media_type || '').startsWith(t));
+                      const isPlaceholder = hasMedia && /^\[.* received\]$/.test((m.message || '').trim());
+                      return !isPlaceholder && m.message
+                        ? <p className="text-gray-800 whitespace-pre-wrap">{m.message}</p>
+                        : null;
+                    })()}
+                    {/* WhatsApp media — image / video / file */}
+                    {(m.whatsapp_media_url || m.whatsapp_media_id) && (() => {
+                      const mediaType = m.whatsapp_media_type || '';
+                      const src = `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`;
+
+                      if (mediaType === 'image' || mediaType.startsWith('image/')) {
+                        return <img src={src} alt="WhatsApp image" className="mt-2 max-w-xs rounded-lg cursor-pointer hover:opacity-90" onClick={() => window.open(src, '_blank')} />;
+                      }
+                      if (mediaType === 'video' || mediaType.startsWith('video/')) {
+                        return <video src={src} controls className="mt-2 max-w-xs rounded-lg" />;
+                      }
+                      if (mediaType === 'document' || mediaType === 'audio') {
+                        return (
+                          <a href={src} target="_blank" rel="noopener noreferrer"
+                             className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs hover:bg-gray-200">
+                            📎 View {mediaType}
+                          </a>
+                        );
+                      }
+                      return null;
+                    })()}
+                    {/* Instagram media */}
+                    {m.instagram_media_url && (() => {
+                      const rawUrl = m.instagram_media_url;
+                      const url = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || rawUrl?.link || null;
+                      if (!url) return null;
+                      const mediaType = m.instagram_media_type || '';
+                      if (mediaType === 'image' || mediaType.startsWith('image/')) {
+                        return <img src={url} alt="Instagram image" className="mt-2 max-w-xs rounded-lg" />;
+                      }
+                      if (mediaType === 'video' || mediaType.startsWith('video/')) {
+                        return <video src={url} controls className="mt-2 max-w-xs rounded-lg" />;
+                      }
+                      return (
+                        <a href={url} target="_blank" rel="noopener noreferrer"
+                           className="mt-2 inline-flex items-center gap-1.5 text-xs text-brand-600 hover:underline">
+                          View {mediaType || 'media'}
+                        </a>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

@@ -255,7 +255,7 @@ We'll update you right here on WhatsApp once it's been reviewed. Our team typica
 Output ONLY valid JSON. No text before or after. No markdown fences.
 
 {
-  "action": "show_menu | fetch_order | create_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | ask_quantity | offer_gift_card | accept_gift_card | ask_cancel_confirm | ask_reason | ask_evidence | ask_confirmation | submit_ticket | create_ticket | cancel_order | none",
+  "action": "show_menu | fetch_order | create_order | check_inventory | fetch_customer | create_customer | ask_email | ask_order_number | ask_product | browse_products | ask_quantity | ask_order_confirm | offer_gift_card | accept_gift_card | ask_cancel_confirm | ask_reason | ask_evidence | ask_confirmation | submit_ticket | create_ticket | cancel_order | none",
   "email": "string or null",
   "order_id": "string or null",
   "order_number": "digits only, no # prefix, or null",
@@ -420,6 +420,37 @@ async def _get_product_image_url(product_id) -> str:
         return ""
 
 
+async def _browse_products(limit: int = 10) -> list[dict]:
+    """Fetch published products from Shopify for the browse catalog."""
+    try:
+        result = await shopify_get(
+            "/products.json",
+            params={"status": "active", "limit": limit, "fields": "id,title,variants,images"},
+        )
+        products = result.get("products", [])
+        out = []
+        for p in products:
+            variants = p.get("variants", [])
+            first_variant = variants[0] if variants else {}
+            price = first_variant.get("price", "0.00")
+            stock = int(first_variant.get("inventory_quantity") or 0)
+            managed = first_variant.get("inventory_management") == "shopify"
+            images = p.get("images", [])
+            out.append({
+                "id": str(p.get("id", "")),
+                "title": p.get("title", ""),
+                "price": price,
+                "currency": "INR",
+                "variant_id": str(first_variant.get("id", "")),
+                "in_stock": (not managed) or stock > 0,
+                "stock": stock if managed else None,
+                "image_url": images[0].get("src", "") if images else "",
+            })
+        return out
+    except ShopifyAPIError:
+        return []
+
+
 def _format_order_details(order: dict) -> str:
     """Build a WhatsApp-formatted order detail string (kept under 1 000 chars)."""
     order_num = order.get("order_number", "")
@@ -538,12 +569,13 @@ async def _execute_action(
         sections = [{
             "title": "How can I help?",
             "rows": [
-                {"id": "menu_track",   "title": "Track My Order",   "description": "Check order status & tracking"},
-                {"id": "menu_cancel",  "title": "Cancel Order",    "description": "Cancel an existing order"},
-                {"id": "menu_refund",  "title": "Refund Order",    "description": "Request a refund"},
-                {"id": "menu_replace", "title": "Replace Order",   "description": "Request a replacement"},
-                {"id": "menu_return",  "title": "Return Order",    "description": "Return a product"},
-                {"id": "menu_support", "title": "Talk to Support", "description": "Speak with our team"},
+                {"id": "menu_new_order", "title": "Create Order",    "description": "Place a new order"},
+                {"id": "menu_track",     "title": "Track My Order", "description": "Check order status & tracking"},
+                {"id": "menu_cancel",    "title": "Cancel Order",   "description": "Cancel an existing order"},
+                {"id": "menu_refund",    "title": "Refund Order",   "description": "Request a refund"},
+                {"id": "menu_replace",   "title": "Replace Order",  "description": "Request a replacement"},
+                {"id": "menu_return",    "title": "Return Order",   "description": "Return a product"},
+                {"id": "menu_support",   "title": "Talk to Support","description": "Speak with our team"},
             ],
         }]
         return body_text, {"body": body_text, "list_sections": sections, "button_label": "Choose Option"}
@@ -563,6 +595,43 @@ async def _execute_action(
         buttons = [
             {"id": "browse_products", "title": "Browse Products"},
             {"id": "type_product",    "title": "I'll Type the Name"},
+        ]
+        return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
+
+    # ── browse_products — fetch catalog and show as list ────────────────────
+    if action == "browse_products":
+        products = await _browse_products(10)
+        if not products:
+            return "Sorry, I couldn't load our product catalog right now. Could you type the product name instead? 🙏", None
+
+        rows = []
+        for p in products:
+            stock_tag = "In Stock" if p["in_stock"] else "Out of Stock"
+            desc = f"{p['currency']} {p['price']} · {stock_tag}"
+            rows.append({
+                "id": f"select_product_{p['id']}",
+                "title": p["title"][:24],
+                "description": desc[:72],
+            })
+
+        body_text = "Here are our products! Tap one to order 🛍️"
+        sections = [{"title": "Our Products", "rows": rows}]
+        return body_text, {"body": body_text, "list_sections": sections, "button_label": "View Products"}
+
+    # ── ask_order_confirm — show order summary before placing ────────────────
+    if action == "ask_order_confirm":
+        product_name = (agent_result.get("products") or [{}])[0].get("name", "your item")
+        qty = (agent_result.get("products") or [{}])[0].get("quantity", 1)
+        body_text = (
+            default_msg or
+            f"Here's your order summary:\n\n"
+            f"🛍 *Product:* {product_name}\n"
+            f"📦 *Quantity:* {qty}\n\n"
+            f"Would you like to confirm and place this order?"
+        )
+        buttons = [
+            {"id": "confirm_order_yes", "title": "Confirm Order"},
+            {"id": "confirm_order_no",  "title": "Cancel"},
         ]
         return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
 
@@ -685,24 +754,69 @@ async def _execute_action(
             if not order:
                 err = f"I couldn't find the order. Could you share the order number? 🙏"
 
-        # Priority 3: lookup latest order by email
+        # Priority 3: email given but no order number → fetch ALL orders and let customer pick
         if not order and email:
             try:
                 result = await shopify_get(
                     "/orders.json",
-                    params={"email": email, "limit": 1, "status": "any"},
+                    params={"email": email, "limit": 10, "status": "any"},
                 )
-                orders = result.get("orders", [])
-                if orders:
-                    order = orders[0]
+                all_orders = result.get("orders", [])
+
+                if not all_orders:
+                    return f"I couldn't find any orders for *{email}*. Is that the right email? 🤔", None
+
+                # Single order → show it directly
+                if len(all_orders) == 1:
+                    order = all_orders[0]
                 else:
-                    err = f"I couldn't find any orders for *{email}*. Is that the right email? 🤔"
+                    # Multiple orders → show a list for customer to pick
+                    rows = []
+                    for o in all_orders[:10]:
+                        o_num = str(o.get("order_number", ""))
+                        o_id = str(o.get("id", ""))
+                        o_total = o.get("total_price", "0.00")
+                        o_currency = o.get("currency", "INR")
+                        o_status = (o.get("fulfillment_status") or "unfulfilled").replace("_", " ").title()
+                        o_date = ""
+                        if o.get("created_at"):
+                            try:
+                                from datetime import datetime as _dt
+                                _parsed = _dt.fromisoformat(o["created_at"].replace("Z", "+00:00"))
+                                o_date = _parsed.strftime("%d %b %Y")
+                            except Exception:
+                                o_date = ""
+
+                        # Build items summary (first 2 items)
+                        items = o.get("line_items", [])
+                        item_names = ", ".join(li.get("title", "")[:20] for li in items[:2])
+                        if len(items) > 2:
+                            item_names += f" +{len(items) - 2} more"
+
+                        desc = f"{o_currency} {o_total} · {o_status}"
+                        if o_date:
+                            desc = f"{o_date} · {desc}"
+
+                        rows.append({
+                            "id": f"pick_order_{o_id}",
+                            "title": f"Order #{o_num}"[:24],
+                            "description": desc[:72],
+                        })
+
+                    body_text = (
+                        f"I found *{len(all_orders)} orders* for *{email}* 📦\n\n"
+                        f"Which order would you like to check?"
+                    )
+                    sections = [{"title": "Your Orders", "rows": rows}]
+                    return body_text, {"body": body_text, "list_sections": sections, "button_label": "Select Order"}
+
             except ShopifyAPIError:
                 err = default_msg
 
         if not order:
             return err or default_msg, None
 
+        # ── Single order detail view ─────────────────────────────────────────
         # Add ticket context if customer has an open ticket
         ticket_note = ""
         try:
@@ -717,6 +831,29 @@ async def _execute_action(
         details_text = ticket_note + _format_order_details(order)
         real_order_id = str(order.get("id", ""))
         order_num_str = str(order.get("order_number", ""))
+
+        # Tracking info (prominent for track-my-order flow)
+        fulfillments = order.get("fulfillments") or []
+        tracking_card = ""
+        if fulfillments:
+            last_ff = fulfillments[-1]
+            t_num = last_ff.get("tracking_number")
+            t_company = last_ff.get("tracking_company", "")
+            t_url = last_ff.get("tracking_url", "")
+            t_status = (last_ff.get("shipment_status") or last_ff.get("status") or "").replace("_", " ").title()
+            if t_num:
+                tracking_card = (
+                    f"\n\n📍 *Shipment Tracking:*\n"
+                    f"  🚚 Carrier: *{t_company or 'Shipping Partner'}*\n"
+                    f"  📦 Tracking #: *{t_num}*\n"
+                )
+                if t_status:
+                    tracking_card += f"  📋 Status: *{t_status}*\n"
+                if t_url:
+                    tracking_card += f"  🔗 Track here: {t_url}\n"
+
+        if tracking_card:
+            details_text += tracking_card
 
         # Try to get product image from first line item
         image_url = ""

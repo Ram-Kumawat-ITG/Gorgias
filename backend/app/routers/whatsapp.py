@@ -220,6 +220,10 @@ async def _handle_messages(value: dict):
                 elif btn_id.startswith("cancel_"):
                     _oid = btn_id[len("cancel_"):]
                     body = f"I want to cancel my order (order_id:{_oid})"
+                # Pick order from list (email lookup with multiple orders)
+                elif btn_id.startswith("pick_order_"):
+                    _oid = btn_id[len("pick_order_"):]
+                    body = f"Show me details for this order (order_id:{_oid})"
                 # Main menu buttons
                 elif btn_id == "menu_track" or btn_id == "menu_track_order":
                     body = "I want to track my order"
@@ -289,6 +293,17 @@ async def _handle_messages(value: dict):
                 # Quantity buttons
                 elif btn_id in ("qty_1", "qty_2", "qty_3"):
                     body = btn_id.replace("qty_", "")
+                # Browse / select product
+                elif btn_id == "browse_products":
+                    body = "Show me your products"
+                elif btn_id.startswith("select_product_"):
+                    _pid = btn_id[len("select_product_"):]
+                    body = f"I want to order this product (product_id:{_pid} product_name:{btn_title})"
+                # Order confirmation
+                elif btn_id == "confirm_order_yes":
+                    body = "Yes, please place my order"
+                elif btn_id == "confirm_order_no":
+                    body = "No, cancel the order"
                 else:
                     _, _, _btn_ref = btn_id.partition("_")
                     body = btn_title + (f" (order {_btn_ref})" if _btn_ref else "")
@@ -309,6 +324,11 @@ async def _handle_messages(value: dict):
                 elif btn_id.startswith("cancel_"):
                     _oid = btn_id[len("cancel_"):]
                     body = f"I want to cancel my order (order_id:{_oid})"
+                elif btn_id.startswith("pick_order_"):
+                    _oid = btn_id[len("pick_order_"):]
+                    body = f"Show me details for this order (order_id:{_oid})"
+                elif btn_id == "menu_new_order":
+                    body = "I want to place a new order"
                 elif btn_id == "menu_track" or btn_id == "menu_track_order":
                     body = "I want to track my order"
                 elif btn_id == "menu_cancel":
@@ -357,6 +377,16 @@ async def _handle_messages(value: dict):
                         body = "No, I don't want to submit the request"
                     else:
                         body = f"Yes, please submit my {_atype} request (action_type:{_atype})"
+                # Browse / select product (from list message)
+                elif btn_id == "browse_products":
+                    body = "Show me your products"
+                elif btn_id.startswith("select_product_"):
+                    _pid = btn_id[len("select_product_"):]
+                    body = f"I want to order this product (product_id:{_pid} product_name:{btn_title})"
+                elif btn_id == "confirm_order_yes":
+                    body = "Yes, please place my order"
+                elif btn_id == "confirm_order_no":
+                    body = "No, cancel the order"
                 else:
                     body = btn_title or f"[List reply: {btn_id}]"
             else:
