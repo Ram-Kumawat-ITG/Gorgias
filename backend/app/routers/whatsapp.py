@@ -177,6 +177,7 @@ async def _handle_messages(value: dict):
         body = ""
         media_url = ""
         media_type = ""
+        media_id = ""  # Meta media ID — stored for re-fetching download URL later
 
         if msg_type == "text":
             body = msg.get("text", {}).get("body", "")
@@ -220,6 +221,8 @@ async def _handle_messages(value: dict):
                     _oid = btn_id[len("cancel_"):]
                     body = f"I want to cancel my order (order_id:{_oid})"
                 # Main menu buttons
+                elif btn_id == "menu_track" or btn_id == "menu_track_order":
+                    body = "I want to track my order"
                 elif btn_id == "menu_cancel":
                     body = "I want to cancel my order"
                 elif btn_id == "menu_refund":
@@ -228,8 +231,6 @@ async def _handle_messages(value: dict):
                     body = "I want a replacement"
                 elif btn_id == "menu_return":
                     body = "I want to return my order"
-                elif btn_id == "menu_track_order":
-                    body = "I want to track my order"
                 elif btn_id == "menu_new_order":
                     body = "I want to place a new order"
                 elif btn_id == "menu_cancel_return":
@@ -308,6 +309,8 @@ async def _handle_messages(value: dict):
                 elif btn_id.startswith("cancel_"):
                     _oid = btn_id[len("cancel_"):]
                     body = f"I want to cancel my order (order_id:{_oid})"
+                elif btn_id == "menu_track" or btn_id == "menu_track_order":
+                    body = "I want to track my order"
                 elif btn_id == "menu_cancel":
                     body = "I want to cancel my order"
                 elif btn_id == "menu_refund":
@@ -395,6 +398,7 @@ async def _handle_messages(value: dict):
             wa_message_id=wa_message_id,
             media_url=media_url,
             media_type=media_type,
+            media_id=media_id,
             merchant_id=merchant_id,
         )
 

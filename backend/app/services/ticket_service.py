@@ -227,6 +227,7 @@ async def create_ticket_from_whatsapp(
     wa_message_id: str = None,
     media_url: str = "",
     media_type: str = "",
+    media_id: str = "",
     merchant_id: str = None,
 ) -> dict:
     """Create a new ticket or append to existing one from a WhatsApp message."""
@@ -270,6 +271,7 @@ async def create_ticket_from_whatsapp(
             sender_type="customer",
             channel="whatsapp",
             whatsapp_message_id=wa_message_id,
+            whatsapp_media_id=media_id if media_id else None,
             whatsapp_media_url=media_url if media_url else None,
             whatsapp_media_type=media_type if media_type else None,
         )

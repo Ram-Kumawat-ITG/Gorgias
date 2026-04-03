@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import CustomerSidebar from '../components/CustomerSidebar';
-import AISuggestion from '../components/AISuggestion';
+
 import MacroPicker from '../components/MacroPicker';
 import { Mail, MessageSquare, FileText, Check, CheckCheck, Clock, AlertCircle, Camera } from 'lucide-react';
 import clsx from 'clsx';
@@ -225,18 +225,74 @@ export default function TicketDetailPage() {
               <span className="badge bg-orange-100 text-orange-700 text-xs uppercase">
                 {ticket.pending_action_type || 'request'}
               </span>
+              <span className="badge bg-gray-50 text-gray-500 capitalize text-xs">
+                {ticket.channel || 'unknown'}
+              </span>
             </div>
-            <div className="text-sm text-gray-700 space-y-1 mb-3">
+            <div className="bg-white border border-orange-100 rounded-lg p-3 text-sm space-y-1.5 mb-3">
               {ticket.pending_action_order_number && (
-                <div>Order: <strong>#{ticket.pending_action_order_number}</strong></div>
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Order</span>
+                  <span className="font-semibold text-gray-900">#{ticket.pending_action_order_number}</span>
+                </div>
+              )}
+              {ticket.customer_name && (
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Customer</span>
+                  <span className="text-gray-800">{ticket.customer_name}</span>
+                </div>
+              )}
+              {ticket.pending_action_email && (
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Contact</span>
+                  <span className="text-gray-800">{ticket.pending_action_email}</span>
+                </div>
               )}
               {ticket.pending_action_issue && (
-                <div>Issue: <strong className="capitalize">{ticket.pending_action_issue.replace(/_/g, ' ')}</strong></div>
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Issue</span>
+                  <span className="text-gray-800 capitalize">{ticket.pending_action_issue.replace(/_/g, ' ')}</span>
+                </div>
               )}
               {ticket.pending_action_description && (
-                <div>Description: <span className="text-gray-600">{ticket.pending_action_description}</span></div>
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Description</span>
+                  <span className="text-gray-700">{ticket.pending_action_description}</span>
+                </div>
+              )}
+              {ticket.created_at && (
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-24 shrink-0">Submitted</span>
+                  <span className="text-gray-700">{new Date(ticket.created_at).toLocaleString()}</span>
+                </div>
               )}
             </div>
+            {/* Proof / media thumbnails */}
+            {messages.some(m => m.whatsapp_media_url || m.instagram_media_url) && (
+              <div className="mb-3">
+                <p className="text-xs font-semibold text-gray-500 mb-1.5">📸 Proof Uploaded</p>
+                <div className="flex flex-wrap gap-2">
+                  {messages.filter(m => m.sender_type === 'customer' && (m.whatsapp_media_url || m.whatsapp_media_id || m.instagram_media_url)).map((m, idx) => {
+                    const mediaType = m.whatsapp_media_type || m.instagram_media_type || ''
+                    const isImage = mediaType === 'image' || mediaType.startsWith('image/')
+                    const isWhatsApp = !!(m.whatsapp_media_url || m.whatsapp_media_id)
+                    const src = isWhatsApp
+                      ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`
+                      : (() => {
+                          const rawUrl = m.instagram_media_url
+                          return typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || rawUrl?.link || null
+                        })()
+                    return isImage ? (
+                      <img key={idx} src={src} alt="Proof" className="w-16 h-16 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80" onClick={() => window.open(src, '_blank')} />
+                    ) : (
+                      <a key={idx} href={src} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs hover:bg-gray-200">
+                        📎 {mediaType || 'file'}
+                      </a>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             {!showRejectInput ? (
               <div className="flex gap-2">
                 <button
@@ -311,19 +367,12 @@ export default function TicketDetailPage() {
                   ? <p className="text-gray-800 whitespace-pre-wrap">{m.body}</p>
                   : null;
               })()}
-              {m.whatsapp_media_url && (() => {
-                const rawUrl = typeof m.whatsapp_media_url === 'string'
-                  ? m.whatsapp_media_url
-                  : m.whatsapp_media_url?.url || m.whatsapp_media_url?.link || null;
+              {(m.whatsapp_media_url || m.whatsapp_media_id) && (() => {
                 const mediaType = m.whatsapp_media_type || '';
-                if (!rawUrl) return null;
 
-                // If the media URL is a Meta Graph URL (requires Authorization),
-                // proxy it through our backend so the browser can fetch it.
-                const needsProxy = rawUrl.includes('graph.facebook.com') || rawUrl.includes('facebook.com');
-                const src = needsProxy
-                  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`
-                  : rawUrl;
+                // Always proxy WhatsApp media through backend — Meta URLs expire
+                // and require Authorization header the browser doesn't have
+                const src = `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`;
 
                 if (mediaType === 'image' || mediaType.startsWith('image/')) {
                   return <img src={src} alt="WhatsApp image" className="mt-2 max-w-xs rounded-lg" />;
@@ -373,9 +422,6 @@ export default function TicketDetailPage() {
             </div>
           ))}
         </div>
-
-        {/* AI Suggestion */}
-        <AISuggestion ticketId={id} onUse={text => setReply(text)} />
 
         {/* Reply composer */}
         <div className="card p-4 mt-4">

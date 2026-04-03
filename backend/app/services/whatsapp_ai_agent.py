@@ -143,11 +143,13 @@ from app.services.shopify_client import shopify_get, shopify_post, shopify_put, 
 # - Output ONLY valid JSON, nothing else"""
 
 
-SYSTEM_PROMPT = """You are an AI-powered WhatsApp Customer Support Agent integrated with a Shopify store and a helpdesk ticketing system.
+SYSTEM_PROMPT = """You are an AI-powered Customer Support Agent integrated with a Shopify store and a helpdesk ticketing system.
 
-ALWAYS respond in English only. Be friendly, slightly conversational, and clear. Never sound robotic.
+ALWAYS respond in English only. Be friendly, warm, empathetic, and professional. Never sound robotic.
 Never say "I am an AI". Never use technical terms like "JSON", "action", or "system".
 Use *bold* for order numbers, amounts, and product names. Use emojis sparingly.
+Acknowledge the customer's frustration before diving into process.
+Lead every message with what you CAN do — not what you can't.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🧠 CORE RULES
@@ -158,6 +160,7 @@ Use *bold* for order numbers, amounts, and product names. Use emojis sparingly.
 - Customers should NEVER need to type — use buttons for everything
 - Only ask customer to TYPE: email address or order number
 - NEVER directly process refund/return/replace/cancel — ALWAYS create a ticket for admin approval
+- NEVER create duplicate tickets — if an active request exists for the same order, inform the customer
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👋 GREETING
@@ -209,28 +212,41 @@ Step 3b → If NO → none
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 REFUND / 🔁 REPLACE / 📦 RETURN FLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ NEVER process directly — always ticket + admin approval.
-Image/video proof is MANDATORY for these requests.
+NEVER process directly — always ticket + admin approval.
+Image/video proof is MANDATORY for ALL these requests. Do NOT skip this step.
 
 Step 1 → ask_reason with correct action_type
   Message: "Could you please tell us why you'd like a [refund/replacement/return]?"
-  (System shows reason buttons automatically)
+  (System shows reason buttons: Wrong Product, Damaged, Quality Issue, Delayed, Other)
 
-Step 2 → ask_evidence (MANDATORY — do not skip)
-  Message: "Please upload a clear image 📸 or video 🎥 of the product so we can verify your request."
+Step 2 → ask_evidence (MANDATORY — block until media received)
+  Message: "To process your request, we'll need visual proof of the issue. Please upload clear photos 📸 or a short video 🎥 of the product."
+  If customer responds with text only (no media) → remind them:
+  "We still need photos or video of the product before we can submit your request. Please upload when you're ready."
 
-Step 3 → ask_confirmation
-  Message: "Would you like to proceed with your [refund/replacement/return] request?"
+Step 3 → ask_confirmation (show full summary before submission)
+  Message: "Here's a summary of your request:
+
+📋 *Request Type:* [Refund / Return / Replacement]
+📦 *Order:* #[Order Number]
+❗ *Reason:* [Selected Reason]
+📸 *Proof:* Received
+
+Shall I go ahead and submit this for review?"
   (System shows Yes Submit / No buttons)
 
 Step 4 → submit_ticket
-  Message: "Your request has been submitted and is awaiting admin approval. We'll update you here on WhatsApp once it's reviewed 🙏"
+  Message: "✅ Your *[Type] Request* has been submitted and is awaiting admin approval.
+
+We'll update you right here on WhatsApp once it's been reviewed. Our team typically responds within 24-48 hours. 🙏"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 ERRORS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Order not found → "I couldn't find that order. Would you like to try with your email instead?"
-- Email not found → "I couldn't find an account with that email. Would you like to try a different one?"
+- Order not found → "We couldn't find that order. Please double-check your Order ID or share the email linked to your account."
+- Email not found → "We couldn't find an account with that email. Would you like to try a different one?"
+- Media upload fail → "Your file couldn't be uploaded. Please try again with a different format (JPG, PNG, MP4)."
+- Duplicate request → "You already have an active request for this order. Our team is reviewing it and will update you soon."
 - Generic error → "Something went wrong while processing your request. Please try again or contact support."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -253,14 +269,14 @@ Output ONLY valid JSON. No text before or after. No markdown fences.
 
  
 
-OUTPUT RULES:
-- Output ONLY valid JSON — no text before or after
-- "message" is ALWAYS required — never omit it
-- "buttons" = [] if no choices needed
-- Never guess missing data — use the correct ask_* action
-- Always match action to the current step in the flow
-- Infer context from conversation history before asking again
-"""
+STRICT RULES:
+- "message" is ALWAYS required and never empty
+- Do NOT include buttons in JSON — system handles all buttons automatically
+- Use ask_email / ask_order_number when required info is missing
+- Use submit_ticket to finalize any support request
+- Infer all context from conversation history — never re-ask for info already provided
+- NEVER skip ask_evidence for refund/replace/return — proof is MANDATORY
+- NEVER create duplicate tickets — check conversation for existing active requests"""
 
 
 # ── Conversation history ──────────────────────────────────────────────────────
@@ -522,6 +538,7 @@ async def _execute_action(
         sections = [{
             "title": "How can I help?",
             "rows": [
+                {"id": "menu_track",   "title": "Track My Order",   "description": "Check order status & tracking"},
                 {"id": "menu_cancel",  "title": "Cancel Order",    "description": "Cancel an existing order"},
                 {"id": "menu_refund",  "title": "Refund Order",    "description": "Request a refund"},
                 {"id": "menu_replace", "title": "Replace Order",   "description": "Request a replacement"},
@@ -559,15 +576,55 @@ async def _execute_action(
         ]
         return body_text, {"body": body_text, "buttons": buttons, "image_url": ""}
 
-    # ── ask_retention (same as offer_gift_card for RRR path) ─────────────────
+    # ── ask_retention (gift card offer for RRR path) ──────────────────────────
     if action == "ask_retention":
         action_type = (agent_result.get("action_type") or "refund").lower()
         type_label = {"refund": "refund", "replace": "replacement", "return": "return"}.get(action_type, "request")
-        body_text = (
-            f"Before we proceed with your {type_label} request — we'd love to offer you a "
-            f"*Gift Card* for the order value instead. It's faster and you can use it on anything! 🎁\n\n"
-            f"Would you like to accept a Gift Card?"
-        )
+
+        # Try to fetch order details for a richer gift card offer
+        gc_order = None
+        gc_order_id = order_id
+        if not gc_order_id and order_number:
+            gc_order, _ = await _fetch_order_by_number(order_number, email)
+            if gc_order:
+                gc_order_id = str(gc_order.get("id", ""))
+        elif gc_order_id:
+            gc_order = await _get_order(gc_order_id)
+
+        if gc_order:
+            gc_total = gc_order.get("total_price", "0.00")
+            gc_currency = gc_order.get("currency", "INR")
+            gc_order_num = gc_order.get("order_number", order_number or "")
+            items = gc_order.get("line_items", [])
+            items_text = "\n".join(
+                f"  • *{li.get('title', '')}* × {li.get('quantity', 1)}"
+                for li in items[:5]
+            ) or "  • Your ordered items"
+
+            body_text = (
+                f"Before we proceed with your {type_label} request — we'd love to offer you a "
+                f"*Gift Card* instead! 💳\n\n"
+                f"📦 *Order:* #{gc_order_num}\n"
+                f"🛍 *Items:*\n{items_text}\n\n"
+                f"🎁 *Gift Card Details:*\n"
+                f"  💰 *Value:* {gc_currency} {gc_total}\n"
+                f"  ✅ Use on *any product* in our store\n"
+                f"  ⏱ *No expiry* — use it anytime\n"
+                f"  📧 Sent to your email instantly\n\n"
+                f"Would you like to accept the Gift Card?"
+            )
+        else:
+            body_text = (
+                f"Before we proceed with your {type_label} request — we'd love to offer you a "
+                f"*Gift Card* instead! 💳\n\n"
+                f"🎁 *Gift Card Benefits:*\n"
+                f"  💰 *Full order value* credited\n"
+                f"  ✅ Use on *any product* in our store\n"
+                f"  ⏱ *No expiry* — use it anytime\n"
+                f"  📧 Sent to your email instantly\n\n"
+                f"Would you like to accept the Gift Card?"
+            )
+
         buttons = [
             {"id": f"accept_gc_{action_type}",  "title": "Accept Gift Card"},
             {"id": f"decline_gc_{action_type}", "title": "No, Continue"},
@@ -799,12 +856,50 @@ async def _execute_action(
 
     # ── Cancel: gift card offer FIRST (new flow) ─────────────────────────────
     if action == "offer_gift_card":
-        body_text = (
-            "We understand you'd like to cancel your order.\n\n"
-            "Before we proceed, we'd love to offer you a *Gift Card* instead — "
-            "so you don't lose the value of your purchase 💳\n\n"
-            "Would you like to accept a Gift Card?"
-        )
+        # Try to fetch order details for a richer gift card offer
+        gc_order = None
+        gc_order_id = order_id
+        if not gc_order_id and order_number:
+            gc_order, _ = await _fetch_order_by_number(order_number, email)
+            if gc_order:
+                gc_order_id = str(gc_order.get("id", ""))
+        elif gc_order_id:
+            gc_order = await _get_order(gc_order_id)
+
+        if gc_order:
+            gc_total = gc_order.get("total_price", "0.00")
+            gc_currency = gc_order.get("currency", "INR")
+            gc_order_num = gc_order.get("order_number", order_number or "")
+            items = gc_order.get("line_items", [])
+            items_text = "\n".join(
+                f"  • *{li.get('title', '')}* × {li.get('quantity', 1)}"
+                for li in items[:5]
+            ) or "  • Your ordered items"
+
+            body_text = (
+                f"We understand you'd like to cancel your order.\n\n"
+                f"Before we proceed, we'd love to offer you a *Gift Card* instead 💳\n\n"
+                f"📦 *Order:* #{gc_order_num}\n"
+                f"🛍 *Items:*\n{items_text}\n\n"
+                f"🎁 *Gift Card Details:*\n"
+                f"  💰 *Value:* {gc_currency} {gc_total}\n"
+                f"  ✅ Use on *any product* in our store\n"
+                f"  ⏱ *No expiry* — use it anytime\n"
+                f"  📧 Sent to your email instantly\n\n"
+                f"Would you like to accept the Gift Card?"
+            )
+        else:
+            body_text = (
+                f"We understand you'd like to cancel your order.\n\n"
+                f"Before we proceed, we'd love to offer you a *Gift Card* instead 💳\n\n"
+                f"🎁 *Gift Card Benefits:*\n"
+                f"  💰 *Full order value* credited\n"
+                f"  ✅ Use on *any product* in our store\n"
+                f"  ⏱ *No expiry* — use it anytime\n"
+                f"  📧 Sent to your email instantly\n\n"
+                f"Would you like to accept the Gift Card?"
+            )
+
         buttons = [
             {"id": "accept_gc_cancel",  "title": "Accept Gift Card"},
             {"id": "decline_gc_cancel", "title": "Reject Gift Card"},

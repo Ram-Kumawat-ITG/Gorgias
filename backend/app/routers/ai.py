@@ -183,6 +183,105 @@ class ApproveRejectRequest(BaseModel):
     rejection_reason: Optional[str] = None
 
 
+# ── Multi-channel notification helper ────────────────────────────────────────
+
+async def _notify_customer(
+    ticket: dict,
+    ticket_id: str,
+    message_wa: str,
+    message_email: str,
+    email_subject: str,
+    message_ig: str,
+    agent_id: str,
+) -> bool:
+    """Send a notification to the customer on the same channel they used.
+
+    Returns True if notification was sent successfully.
+    """
+    from app.models.message import MessageInDB
+
+    db = get_db()
+    channel = ticket.get("channel", "")
+    merchant_id = ticket.get("merchant_id")
+    notified = False
+
+    # ── WhatsApp ─────────────────────────────────────────────────────────────
+    if channel == "whatsapp":
+        wa_phone = ticket.get("whatsapp_phone", "")
+        if wa_phone and message_wa:
+            try:
+                from app.services.whatsapp_service import get_whatsapp_config, send_text_message
+                config = await get_whatsapp_config(merchant_id)
+                wa_result = await send_text_message(wa_phone, message_wa, config)
+                msg_list = wa_result.get("messages") or []
+                sent_id = msg_list[0].get("id") if msg_list else None
+                msg_doc = MessageInDB(
+                    ticket_id=ticket_id,
+                    body=message_wa,
+                    sender_type="agent",
+                    sender_id=agent_id,
+                    channel="whatsapp",
+                    ai_generated=False,
+                    whatsapp_message_id=sent_id,
+                    whatsapp_status="sent" if sent_id else "failed",
+                )
+                await db.messages.insert_one(msg_doc.model_dump())
+                notified = bool(sent_id)
+            except Exception as e:
+                print(f"[notify] WhatsApp failed: {e}")
+
+    # ── Email ────────────────────────────────────────────────────────────────
+    elif channel == "email":
+        customer_email = (
+            ticket.get("pending_action_email")
+            or ticket.get("customer_email", "")
+        )
+        if customer_email and message_email:
+            try:
+                from app.services.mailgun_service import send_reply_email
+                await send_reply_email(customer_email, email_subject, message_email, ticket_id)
+                msg_doc = MessageInDB(
+                    ticket_id=ticket_id,
+                    body=message_email,
+                    sender_type="agent",
+                    sender_id=agent_id,
+                    channel="email",
+                    ai_generated=False,
+                )
+                await db.messages.insert_one(msg_doc.model_dump())
+                notified = True
+            except Exception as e:
+                print(f"[notify] Email failed: {e}")
+
+    # ── Instagram ────────────────────────────────────────────────────────────
+    elif channel == "instagram":
+        ig_user_id = ticket.get("instagram_user_id", "")
+        if ig_user_id and message_ig:
+            try:
+                from app.services.instagram_service import (
+                    get_instagram_config,
+                    send_text_message as ig_send,
+                )
+                config = await get_instagram_config(merchant_id)
+                ig_result = await ig_send(ig_user_id, message_ig, config)
+                sent_ok = "error" not in ig_result
+                msg_doc = MessageInDB(
+                    ticket_id=ticket_id,
+                    body=message_ig,
+                    sender_type="agent",
+                    sender_id=agent_id,
+                    channel="instagram",
+                    ai_generated=False,
+                    instagram_status="sent" if sent_ok else "failed",
+                )
+                await db.messages.insert_one(msg_doc.model_dump())
+                notified = sent_ok
+            except Exception as e:
+                print(f"[notify] Instagram failed: {e}")
+
+    return notified
+
+
 @router.post("/approve-action/{ticket_id}")
 async def approve_pending_action(ticket_id: str, agent=Depends(get_current_agent)):
     """Approve a pending_admin_action ticket — execute the Shopify action and notify customer."""
@@ -196,94 +295,97 @@ async def approve_pending_action(ticket_id: str, agent=Depends(get_current_agent
     action_type = ticket.get("pending_action_type", "")
     order_id = ticket.get("pending_action_order_id", "")
     order_number = ticket.get("pending_action_order_number", "")
-    wa_phone = ticket.get("whatsapp_phone", "")
-    merchant_id = ticket.get("merchant_id")
+    customer_name = ticket.get("customer_name") or "there"
 
     now = datetime.now(timezone.utc)
     shopify_result = None
-    customer_msg = ""
 
-    # Execute the Shopify action
+    # ── Execute the Shopify action ───────────────────────────────────────────
     if action_type == "cancel" and order_id:
         try:
             from app.services.shopify_client import shopify_post as _shopify_post
             await _shopify_post(f"/orders/{order_id}/cancel.json", {})
             shopify_result = "cancelled"
-            customer_msg = (
-                f"✅ Your order *#{order_number}* has been successfully cancelled.\n\n"
-                f"If you made a payment, the refund will be processed within 5–7 business days. 💳"
-            )
         except Exception as e:
             shopify_result = f"error: {e}"
-            customer_msg = (
-                f"✅ Your cancellation request has been approved!\n\n"
-                f"Our team is processing your order *#{order_number}* now. 🙏"
-            )
+
     elif action_type == "refund" and order_id:
         shopify_result = "refund_approved"
-        customer_msg = (
-            f"🎉 Your *Refund Request* has been approved!\n\n"
-            f"The refund for order *#{order_number}* will reflect in your account within 5–7 business days. 💰"
-        )
     elif action_type == "replace" and order_id:
         shopify_result = "replace_approved"
-        customer_msg = (
-            f"🎉 Your *Replacement Request* has been approved!\n\n"
-            f"A replacement for order *#{order_number}* will be shipped shortly. 📦\n"
-            f"Tracking details will be sent to your email."
-        )
     elif action_type == "return" and order_id:
         shopify_result = "return_approved"
-        customer_msg = (
-            f"🎉 Your *Return Request* has been approved!\n\n"
-            f"A pickup for order *#{order_number}* is being scheduled. 📦\n"
-            f"Our team will share the pickup details with you shortly."
-        )
     else:
-        customer_msg = (
-            f"🎉 Your request has been approved and processed successfully!\n\n"
-            f"Our team will be in touch if any further action is needed. 🙏"
-        )
+        shopify_result = "approved"
 
-    # Update ticket
+    # ── Build channel-specific messages ──────────────────────────────────────
+    type_labels = {
+        "refund": "Refund", "replace": "Replacement",
+        "return": "Return", "cancel": "Cancellation",
+    }
+    label = type_labels.get(action_type, "Request")
+
+    outcome_lines = {
+        "cancel": "If you made a payment, the refund will be processed within 5–7 business days.",
+        "refund": "The refund will be credited to your original payment method within 5–7 business days.",
+        "replace": "A replacement order has been created and will be shipped shortly. Tracking details will be sent to your email.",
+        "return": "Your return has been initiated. Our team will be in touch with pickup/drop-off details shortly.",
+    }
+    outcome = outcome_lines.get(action_type, "Our team will be in touch if any further action is needed.")
+
+    # WhatsApp (bold with * and emojis)
+    wa_msg = (
+        f"🎉 Great news, {customer_name}!\n\n"
+        f"Your *{label} Request* for Order *#{order_number}* has been *approved and processed*.\n\n"
+        f"{outcome}\n\n"
+        f"Thank you for your patience 🙏 Is there anything else I can help you with?"
+    )
+
+    # Email (plain text, more formal)
+    email_subject = f"Your {label} Has Been Approved — Order #{order_number}"
+    email_msg = (
+        f"Hi {customer_name},\n\n"
+        f"We're happy to let you know that your {label} request for "
+        f"Order #{order_number} has been approved and processed!\n\n"
+        f"{outcome}\n\n"
+        f"If you have any questions, feel free to reply to this email.\n\n"
+        f"Warm regards,\nSupport Team"
+    )
+
+    # Instagram DM (concise)
+    ig_msg = (
+        f"🎉 Your {label} request for Order #{order_number} has been approved and processed!\n\n"
+        f"{outcome}\n\n"
+        f"Let us know if you need anything else 😊"
+    )
+
+    # ── Update ticket ────────────────────────────────────────────────────────
     await db.tickets.update_one(
         {"id": ticket_id},
         {"$set": {
             "status": "resolved",
             "pending_action_approved_at": now,
+            "resolved_at": now,
             "updated_at": now,
         }},
     )
 
-    # Notify customer via WhatsApp
-    wa_notify_result = None
-    if wa_phone and customer_msg:
-        try:
-            from app.services.whatsapp_service import get_whatsapp_config, send_text_message
-            from app.models.message import MessageInDB
-            config = await get_whatsapp_config(merchant_id)
-            wa_notify_result = await send_text_message(wa_phone, customer_msg, config)
-            msg_list = wa_notify_result.get("messages") or []
-            sent_id = msg_list[0].get("id") if msg_list else None
-            notify_msg = MessageInDB(
-                ticket_id=ticket_id,
-                body=customer_msg,
-                sender_type="agent",
-                sender_id=agent["id"],
-                channel="whatsapp",
-                ai_generated=False,
-                whatsapp_message_id=sent_id,
-                whatsapp_status="sent" if sent_id else "failed",
-            )
-            await db.messages.insert_one(notify_msg.model_dump())
-        except Exception as e:
-            print(f"[approve_action] WhatsApp notify failed: {e}")
+    # ── Notify customer on original channel ──────────────────────────────────
+    notified = await _notify_customer(
+        ticket=ticket,
+        ticket_id=ticket_id,
+        message_wa=wa_msg,
+        message_email=email_msg,
+        email_subject=email_subject,
+        message_ig=ig_msg,
+        agent_id=agent["id"],
+    )
 
     return {
         "status": "approved",
         "action_type": action_type,
         "shopify_result": shopify_result,
-        "customer_notified": wa_notify_result is not None,
+        "customer_notified": notified,
     }
 
 
@@ -303,8 +405,7 @@ async def reject_pending_action(
 
     action_type = ticket.get("pending_action_type", "request")
     order_number = ticket.get("pending_action_order_number", "")
-    wa_phone = ticket.get("whatsapp_phone", "")
-    merchant_id = ticket.get("merchant_id")
+    customer_name = ticket.get("customer_name") or "there"
     rejection_reason = (body.rejection_reason or "").strip()
     now = datetime.now(timezone.utc)
 
@@ -314,11 +415,40 @@ async def reject_pending_action(
     }
     label = type_labels.get(action_type, "Request")
 
-    reason_line = f"\n\nReason: _{rejection_reason}_" if rejection_reason else ""
-    customer_msg = (
-        f"Unfortunately, your *{label} Request* was not approved this time. 😔"
-        f"{reason_line}\n\n"
-        f"If you need further assistance, feel free to contact our support team. 🙏"
+    reason_wa = f"\n\nHere's why: _{rejection_reason}_" if rejection_reason else ""
+    reason_email = f"\n\nReason: {rejection_reason}" if rejection_reason else ""
+    reason_ig = f"\nReason: {rejection_reason}" if rejection_reason else ""
+
+    # WhatsApp
+    wa_msg = (
+        f"Hi {customer_name}, we've reviewed your *{label} Request* "
+        f"for Order *#{order_number}*.\n\n"
+        f"Unfortunately, we were *unable to approve* this request at this time. 😔"
+        f"{reason_wa}\n\n"
+        f"If you feel this decision is incorrect or need further help, "
+        f"our support team is happy to assist. 🙏"
+    )
+
+    # Email
+    email_subject = f"Update on Your {label} Request — Order #{order_number}"
+    email_msg = (
+        f"Hi {customer_name},\n\n"
+        f"Thank you for your patience. After reviewing your {label} request "
+        f"for Order #{order_number}, we regret to inform you that we were "
+        f"unable to approve it at this time."
+        f"{reason_email}\n\n"
+        f"If you'd like to discuss this further, please reply to this email "
+        f"and our team will be happy to assist.\n\n"
+        f"Warm regards,\nSupport Team"
+    )
+
+    # Instagram DM
+    ig_msg = (
+        f"Hi {customer_name}, we reviewed your {label} request "
+        f"for Order #{order_number}.\n\n"
+        f"Unfortunately, it couldn't be approved this time. 😔"
+        f"{reason_ig}\n\n"
+        f"Feel free to DM us if you'd like to discuss further 🙏"
     )
 
     await db.tickets.update_one(
@@ -331,30 +461,19 @@ async def reject_pending_action(
         }},
     )
 
-    if wa_phone and customer_msg:
-        try:
-            from app.services.whatsapp_service import get_whatsapp_config, send_text_message
-            from app.models.message import MessageInDB
-            config = await get_whatsapp_config(merchant_id)
-            wa_result = await send_text_message(wa_phone, customer_msg, config)
-            msg_list = wa_result.get("messages") or []
-            sent_id = msg_list[0].get("id") if msg_list else None
-            notify_msg = MessageInDB(
-                ticket_id=ticket_id,
-                body=customer_msg,
-                sender_type="agent",
-                sender_id=agent["id"],
-                channel="whatsapp",
-                ai_generated=False,
-                whatsapp_message_id=sent_id,
-                whatsapp_status="sent" if sent_id else "failed",
-            )
-            await db.messages.insert_one(notify_msg.model_dump())
-        except Exception as e:
-            print(f"[reject_action] WhatsApp notify failed: {e}")
+    notified = await _notify_customer(
+        ticket=ticket,
+        ticket_id=ticket_id,
+        message_wa=wa_msg,
+        message_email=email_msg,
+        email_subject=email_subject,
+        message_ig=ig_msg,
+        agent_id=agent["id"],
+    )
 
     return {
         "status": "rejected",
         "action_type": action_type,
         "rejection_reason": rejection_reason,
+        "customer_notified": notified,
     }

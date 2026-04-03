@@ -50,7 +50,7 @@ export const aiApi = {
   analyze: (data) => api.post('/ai/analyze', data),
   processTicket: (ticketId) => api.post(`/ai/process-ticket/${ticketId}`),
   approveAction: (ticketId) => api.post(`/ai/approve-action/${ticketId}`),
-  rejectAction: (ticketId) => api.post(`/ai/reject-action/${ticketId}`),
+  rejectAction: (ticketId, body = {}) => api.post(`/ai/reject-action/${ticketId}`, body),
 }
 
 export const channelsApi = {

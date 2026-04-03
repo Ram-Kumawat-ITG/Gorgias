@@ -125,7 +125,17 @@ const FULFILLMENT_COLORS = {
 
 // ── Normalize a raw API message to the shape used by the detail view ─────────
 function normalizeMsg(m) {
-  return { sender: m.sender_type, message: m.body, time: m.created_at }
+  return {
+    id: m.id,
+    sender: m.sender_type,
+    message: m.body,
+    time: m.created_at,
+    whatsapp_media_id: m.whatsapp_media_id || null,
+    whatsapp_media_url: m.whatsapp_media_url || null,
+    whatsapp_media_type: m.whatsapp_media_type || null,
+    instagram_media_url: m.instagram_media_url || null,
+    instagram_media_type: m.instagram_media_type || null,
+  }
 }
 
 const MSG_COLORS = {
@@ -347,6 +357,41 @@ export default function RequestPage() {
   const [activeActionIndex, setActiveActionIndex] = useState(null)
   const [actionResult, setActionResult] = useState({})
 
+  // ── Pending action approve/reject ────────────────────────────────────────
+  const [actionLoading, setActionLoading] = useState(false)
+  const [showRejectInput, setShowRejectInput] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
+  async function approveAction() {
+    if (!selectedTicket) return
+    setActionLoading(true)
+    try {
+      await aiApi.approveAction(selectedTicket.id)
+      const res = await ticketsApi.get(selectedTicket.id)
+      if (res.data) setSelectedTicket(res.data)
+    } catch (err) {
+      console.error('Approve action failed:', err)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function rejectAction() {
+    if (!selectedTicket) return
+    setActionLoading(true)
+    try {
+      await aiApi.rejectAction(selectedTicket.id, { rejection_reason: rejectReason })
+      setShowRejectInput(false)
+      setRejectReason('')
+      const res = await ticketsApi.get(selectedTicket.id)
+      if (res.data) setSelectedTicket(res.data)
+    } catch (err) {
+      console.error('Reject action failed:', err)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   // Track which ticket has been auto-analyzed + previous message count for change detection
   const autoAnalyzedForRef = useRef(null)
   const prevMsgCountRef = useRef(0)
@@ -507,6 +552,8 @@ export default function RequestPage() {
     setEditableData({})
     setActiveActionIndex(null)
     setActionResult({})
+    setShowRejectInput(false)
+    setRejectReason('')
     autoAnalyzedForRef.current = null
     prevMsgCountRef.current = 0
 
@@ -788,6 +835,146 @@ export default function RequestPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Pending Admin Action Banner */}
+              {selectedTicket.status === 'pending_admin_action' && (
+                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-lg">⏳</span>
+                    <span className="font-semibold text-orange-800 text-sm">Pending Admin Approval</span>
+                    <span className={clsx(
+                      'badge text-xs font-semibold uppercase',
+                      selectedTicket.pending_action_type === 'refund'  && 'bg-red-100 text-red-700',
+                      selectedTicket.pending_action_type === 'replace' && 'bg-blue-100 text-blue-700',
+                      selectedTicket.pending_action_type === 'return'  && 'bg-purple-100 text-purple-700',
+                      selectedTicket.pending_action_type === 'cancel'  && 'bg-gray-100 text-gray-700',
+                      !['refund','replace','return','cancel'].includes(selectedTicket.pending_action_type) && 'bg-orange-100 text-orange-700',
+                    )}>
+                      {selectedTicket.pending_action_type || 'request'}
+                    </span>
+                    <span className="badge bg-gray-50 text-gray-500 capitalize text-xs">
+                      {selectedTicket.channel || 'unknown'}
+                    </span>
+                  </div>
+
+                  <div className="bg-white border border-orange-100 rounded-lg p-3 mb-3 space-y-1.5 text-sm">
+                    {selectedTicket.pending_action_order_number && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Order</span>
+                        <span className="font-semibold text-gray-900">#{selectedTicket.pending_action_order_number}</span>
+                      </div>
+                    )}
+                    {selectedTicket.customer_name && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Name</span>
+                        <span className="text-gray-800">{selectedTicket.customer_name}</span>
+                      </div>
+                    )}
+                    {selectedTicket.pending_action_email && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Contact</span>
+                        <span className="text-gray-800">{selectedTicket.pending_action_email}</span>
+                      </div>
+                    )}
+                    {selectedTicket.pending_action_issue && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Issue</span>
+                        <span className="text-gray-800 capitalize">{selectedTicket.pending_action_issue.replace(/_/g, ' ')}</span>
+                      </div>
+                    )}
+                    {selectedTicket.pending_action_description && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Description</span>
+                        <span className="text-gray-700">{selectedTicket.pending_action_description}</span>
+                      </div>
+                    )}
+                    {selectedTicket.created_at && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-24 shrink-0">Submitted</span>
+                        <span className="text-gray-700">{new Date(selectedTicket.created_at).toLocaleString()}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Proof / media thumbnails from message thread */}
+                  {messages.some(m => m.whatsapp_media_url || m.instagram_media_url) && (
+                    <div className="mb-3">
+                      <p className="text-xs font-semibold text-gray-500 mb-1.5">📸 Proof Uploaded</p>
+                      <div className="flex flex-wrap gap-2">
+                        {messages.filter(m => m.sender === 'customer' && (m.whatsapp_media_url || m.whatsapp_media_id || m.instagram_media_url)).map((m, idx) => {
+                          const mediaType = m.whatsapp_media_type || m.instagram_media_type || ''
+                          const isImage = mediaType === 'image' || mediaType.startsWith('image/')
+                          // Always proxy WhatsApp media (Meta URLs expire and need auth)
+                          const isWhatsApp = !!(m.whatsapp_media_url || m.whatsapp_media_id)
+                          const src = isWhatsApp
+                            ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id || idx}`
+                            : (() => {
+                                const rawUrl = m.instagram_media_url
+                                return typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || rawUrl?.link || null
+                              })()
+                          return isImage ? (
+                            <img key={idx} src={src} alt="Proof" className="w-16 h-16 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80" onClick={() => window.open(src, '_blank')} />
+                          ) : (
+                            <a key={idx} href={src} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs hover:bg-gray-200">
+                              📎 {mediaType || 'file'}
+                            </a>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {!showRejectInput ? (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={approveAction}
+                        disabled={actionLoading}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                      >
+                        {actionLoading ? (
+                          <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing…</>
+                        ) : (
+                          <><span>✅</span> Approve Request</>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setShowRejectInput(true)}
+                        disabled={actionLoading}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 disabled:opacity-50 transition-colors"
+                      >
+                        <span>❌</span> Reject Request
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={rejectReason}
+                        onChange={e => setRejectReason(e.target.value)}
+                        placeholder="Rejection reason (optional — sent to customer)"
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={rejectAction}
+                          disabled={actionLoading}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
+                        >
+                          {actionLoading ? (
+                            <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Rejecting…</>
+                          ) : 'Confirm Reject'}
+                        </button>
+                        <button
+                          onClick={() => { setShowRejectInput(false); setRejectReason('') }}
+                          className="px-4 py-2 rounded-lg bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* AI Agent status bar */}
               <div className="mb-4">

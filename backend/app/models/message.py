@@ -26,6 +26,7 @@ class MessageInDB(BaseModel):
     # WhatsApp-specific metadata
     whatsapp_message_id: Optional[str] = None
     whatsapp_status: Optional[str] = None  # sent, delivered, read, failed
+    whatsapp_media_id: Optional[str] = None  # Meta media ID — used to re-fetch download URL
     whatsapp_media_url: Optional[str] = None
     whatsapp_media_type: Optional[str] = None  # image, video, document, audio
     # Instagram-specific metadata
