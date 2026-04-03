@@ -1,0 +1,281 @@
+{
+  "info": {
+    "name": "Gorgias Helpdesk - External API",
+    "description": "API collection for external Shopify stores to create support tickets on the Gorgias Helpdesk platform.\n\n**Authentication**: API Key + Shop Domain handshake. Every request requires X-Shop-Domain and X-API-Key headers. Get your API key by contacting our admin team.\n\n**Base URL**: https://gorgias.onrender.com",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://gorgias.onrender.com",
+      "type": "string"
+    },
+    {
+      "key": "shop_domain",
+      "value": "store-alpha.myshopify.com",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "ghd_live_REPLACE_WITH_YOUR_KEY",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Register Store (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_domain\": \"{{shop_domain}}\",\n  \"app_name\": \"PartnerApp\",\n  \"permissions\": [\"create_ticket\"],\n  \"rate_limit\": 100\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchants/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "merchants", "register"]
+            },
+            "description": "Register a new external store and receive a one-time API key."
+          }
+        },
+        {
+          "name": "List All Merchants (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchants",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "merchants"]
+            },
+            "description": "List all registered merchants with their status, key prefix, and last usage."
+          }
+        },
+        {
+          "name": "Regenerate API Key (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchants/{{shop_domain}}/regenerate-key",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "merchants", "{{shop_domain}}", "regenerate-key"]
+            },
+            "description": "Generate a new API key for a merchant. Old key is immediately invalidated."
+          }
+        },
+        {
+          "name": "Deactivate Store (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchants/{{shop_domain}}/deactivate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "merchants", "{{shop_domain}}", "deactivate"]
+            },
+            "description": "Deactivate a store — their API key stops working immediately."
+          }
+        },
+        {
+          "name": "Activate Store (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchants/{{shop_domain}}/activate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "merchants", "{{shop_domain}}", "activate"]
+            },
+            "description": "Re-activate a previously deactivated store."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth Success",
+      "item": [
+        {
+          "name": "Create Ticket - Minimum Fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "{{shop_domain}}" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Order not delivered\",\n  \"customer_email\": \"john@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Create a ticket with only the required fields."
+          }
+        },
+        {
+          "name": "Create Ticket - All Fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "{{shop_domain}}" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Refund request for damaged item - Order #1042\",\n  \"customer_email\": \"alice.smith@gmail.com\",\n  \"customer_name\": \"Alice Smith\",\n  \"shopify_customer_id\": \"7891234560\",\n  \"channel\": \"email\",\n  \"priority\": \"urgent\",\n  \"tags\": [\"refund\", \"damaged\", \"vip-customer\"],\n  \"initial_message\": \"Hi, I received order #1042 today but the item was damaged in shipping. I would like a full refund.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Create a ticket with all available fields populated."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth Failures",
+      "item": [
+        {
+          "name": "Error - Wrong API Key (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "{{shop_domain}}" },
+              { "key": "X-API-Key", "value": "ghd_live_WRONG_KEY_HERE_12345678901234567890" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Test ticket\",\n  \"customer_email\": \"test@test.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Attempt with a wrong API key. Expected: 401 Invalid API key."
+          }
+        },
+        {
+          "name": "Error - Unregistered Store (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "unknown-store.myshopify.com" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Test ticket\",\n  \"customer_email\": \"test@test.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Attempt from an unregistered store. Expected: 401 Store not registered."
+          }
+        },
+        {
+          "name": "Error - Missing Headers (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Test\",\n  \"customer_email\": \"test@test.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Attempt without X-Shop-Domain and X-API-Key headers. Expected: 422."
+          }
+        },
+        {
+          "name": "Error - Deactivated Store (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "deactivated-store.myshopify.com" },
+              { "key": "X-API-Key", "value": "ghd_live_valid_key_for_deactivated_store" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Test\",\n  \"customer_email\": \"test@test.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            },
+            "description": "Attempt from a deactivated store. Expected: 403 Store access disabled."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ticket Creation",
+      "item": [
+        {
+          "name": "Create Refund Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "{{shop_domain}}" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Refund for order #2087\",\n  \"customer_email\": \"bob@yahoo.com\",\n  \"customer_name\": \"Bob Johnson\",\n  \"channel\": \"shopify\",\n  \"priority\": \"high\",\n  \"tags\": [\"refund\"],\n  \"initial_message\": \"I want a refund for order #2087. The product doesn't match the description.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            }
+          }
+        },
+        {
+          "name": "Create Shipping Inquiry Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Shop-Domain", "value": "{{shop_domain}}" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Where is my order?\",\n  \"customer_email\": \"sarah@outlook.com\",\n  \"customer_name\": \"Sarah Lee\",\n  \"channel\": \"email\",\n  \"priority\": \"normal\",\n  \"tags\": [\"shipping\", \"tracking\"],\n  \"initial_message\": \"I ordered 5 days ago and still no tracking number. Can you check the delivery status?\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/external/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "external", "tickets"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

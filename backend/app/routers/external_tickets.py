@@ -1,5 +1,5 @@
 # External ticket creation router — allows registered external Shopify stores
-# to create tickets via MongoDB handshake (no access token required).
+# to create tickets via API key + shop domain verification (MongoDB handshake).
 from fastapi import APIRouter, Depends, Header, HTTPException
 from typing import Optional
 from datetime import datetime, timezone
@@ -9,24 +9,33 @@ from app.models.message import MessageInDB
 from app.services.shopify_sync import fetch_and_sync_customer
 from app.services.ticket_service import apply_sla_policy, classify_ticket_type, _get_admin_agent_id
 from app.services.activity_service import log_activity
+from app.services.api_key_service import verify_api_key
 
 router = APIRouter(prefix="/api/external", tags=["External"])
 
 
 # ---------------------------------------------------------------------------
-# Merchant verification dependency — MongoDB handshake
+# Merchant verification dependency — API key + shop domain handshake
 # ---------------------------------------------------------------------------
 
-async def verify_merchant(x_shop_domain: Optional[str] = Header(None)) -> str:
-    """Verify the calling store is registered in the merchants collection.
+async def verify_merchant(
+    x_shop_domain: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+) -> str:
+    """Verify the calling store using both shop domain and API key.
 
-    Returns the verified shop_domain string on success.
+    Checks:
+    1. Both headers are present (422 if missing)
+    2. Shop domain exists in merchants collection
+    3. API key hash matches the stored hash
+    4. Merchant is active (403 if inactive)
+    Updates last_used_at on success. Returns verified shop_domain.
     """
     if not x_shop_domain:
-        raise HTTPException(
-            status_code=422,
-            detail="X-Shop-Domain header is required",
-        )
+        raise HTTPException(status_code=422, detail="X-Shop-Domain header is required")
+
+    if not x_api_key:
+        raise HTTPException(status_code=422, detail="X-API-Key header is required")
 
     if not x_shop_domain.endswith(".myshopify.com"):
         raise HTTPException(
@@ -35,63 +44,25 @@ async def verify_merchant(x_shop_domain: Optional[str] = Header(None)) -> str:
         )
 
     db = get_db()
-    merchant = await db.merchants.find_one({
-        "shopify_store_domain": x_shop_domain,
-        "is_active": True,
-    })
+    merchant = await db.merchants.find_one({"shopify_store_domain": x_shop_domain})
 
     if not merchant:
-        raise HTTPException(
-            status_code=401,
-            detail="Store not registered. Please install the app first.",
-        )
+        raise HTTPException(status_code=401, detail="Store not registered. Please install the app first.")
+
+    if not merchant.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Store access disabled. Contact the administrator.")
+
+    stored_hash = merchant.get("api_key_hash", "")
+    if not stored_hash or not verify_api_key(x_api_key, stored_hash):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Update last_used_at timestamp
+    await db.merchants.update_one(
+        {"shopify_store_domain": x_shop_domain},
+        {"$set": {"last_used_at": datetime.now(timezone.utc)}},
+    )
 
     return x_shop_domain
-
-
-# ---------------------------------------------------------------------------
-# Register a merchant store (lightweight — for manual onboarding)
-# ---------------------------------------------------------------------------
-
-from pydantic import BaseModel
-
-
-class MerchantRegister(BaseModel):
-    shop_domain: str
-    app_name: Optional[str] = None
-
-
-@router.post("/register-store")
-async def register_store(data: MerchantRegister):
-    """Register a Shopify store so it can create external tickets."""
-    if not data.shop_domain.endswith(".myshopify.com"):
-        raise HTTPException(
-            status_code=422,
-            detail="shop_domain must end with .myshopify.com",
-        )
-
-    db = get_db()
-    existing = await db.merchants.find_one({"shopify_store_domain": data.shop_domain})
-    if existing:
-        raise HTTPException(status_code=400, detail="Store already registered")
-
-    import uuid
-    doc = {
-        "id": str(uuid.uuid4()),
-        "name": data.shop_domain.replace(".myshopify.com", ""),
-        "support_email": "",
-        "mailgun_api_key": "",
-        "mailgun_domain": "",
-        "shopify_store_domain": data.shop_domain,
-        "shopify_access_token": "",
-        "app_name": data.app_name or "",
-        "is_active": True,
-        "installed_at": datetime.now(timezone.utc),
-        "created_at": datetime.now(timezone.utc),
-    }
-    await db.merchants.insert_one(doc)
-    doc.pop("_id", None)
-    return {"status": "registered", "shop_domain": data.shop_domain, "merchant_id": doc["id"]}
 
 
 # ---------------------------------------------------------------------------

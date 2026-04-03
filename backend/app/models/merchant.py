@@ -1,6 +1,6 @@
 # Merchant model — stores per-merchant email and Shopify configuration
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import uuid
 
@@ -89,5 +89,14 @@ class MerchantInDB(BaseModel):
     twitter_bearer_token: str = ""
     twitter_env_name: str = "production"
     twitter_user_id: str = ""
+    # API key authentication fields
+    api_key_hash: str = ""
+    api_key_prefix: str = ""
+    permissions: List[str] = ["create_ticket"]
+    rate_limit: int = 100  # requests per minute
+    created_by: Optional[str] = None
+    last_used_at: Optional[datetime] = None
+    app_name: str = ""
+    installed_at: Optional[datetime] = None
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
