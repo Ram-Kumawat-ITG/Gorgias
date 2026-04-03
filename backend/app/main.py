@@ -50,7 +50,7 @@ from app.routers import (
     history, analytics, shopify, channels,
     instagram, merchants, whatsapp, sla, sla_policies,
 )
-from app.routers import media, gift_cards
+from app.routers import media, gift_cards, external_tickets
 
 app.include_router(tickets.router)
 app.include_router(customers.router)
@@ -72,4 +72,5 @@ app.include_router(sla.router)
 app.include_router(media.router)
 app.include_router(gift_cards.router)
 app.include_router(sla_policies.router)
+app.include_router(external_tickets.router)
 app.include_router(media.router)

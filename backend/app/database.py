@@ -68,6 +68,8 @@ async def create_indexes():
     await d.tickets.create_index([("instagram_user_id", 1), ("channel", 1), ("status", 1)])
     await d.messages.create_index([("instagram_message_id", 1)])
     await d.merchants.create_index([("instagram_page_id", 1)])
+    # Merchant domain index for external ticket handshake
+    await d.merchants.create_index([("shopify_store_domain", 1)], unique=True, sparse=True)
     await d.tickets.create_index([("shopify_order_id", 1)])
     await d.tickets.create_index([("shopify_order_number", 1)])
     # Gift cards

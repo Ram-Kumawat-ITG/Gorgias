@@ -73,6 +73,8 @@ class TicketInDB(BaseModel):
     customer_name: Optional[str] = None
     shopify_customer_id: Optional[str] = None
     merchant_id: Optional[str] = None
+    store_domain: Optional[str] = None
+    source_store: Optional[str] = None
     channel: str = "email"
     status: str = "open"
     priority: str = "normal"

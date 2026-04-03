@@ -55,12 +55,21 @@ def _parse_shopify_error(response: httpx.Response) -> str:
         return response.text
 
 
-async def _request_with_retry(method: str, endpoint: str, **kwargs):
-    """Execute an HTTP request with automatic retry on 429 (rate limit)."""
-    url = f"{SHOPIFY_BASE_URL}{endpoint}"
+async def _request_with_retry(method: str, endpoint: str, *, store_domain: str = None, access_token: str = None, **kwargs):
+    """Execute an HTTP request with automatic retry on 429 (rate limit).
+
+    If *store_domain* and *access_token* are provided they override the
+    module-level defaults so the request targets a different Shopify store.
+    """
+    if store_domain and access_token:
+        url = f"https://{store_domain}/admin/api/2024-01{endpoint}"
+        headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+    else:
+        url = f"{SHOPIFY_BASE_URL}{endpoint}"
+        headers = HEADERS
     client = get_shopify_client()
     for attempt in range(MAX_RETRIES + 1):
-        r = await getattr(client, method)(url, headers=HEADERS, **kwargs)
+        r = await getattr(client, method)(url, headers=headers, **kwargs)
 
         if r.status_code == 429:
             retry_after = float(r.headers.get("Retry-After", 2.0))
@@ -85,17 +94,17 @@ async def _request_with_retry(method: str, endpoint: str, **kwargs):
     raise ShopifyAPIError(429, {}, "Rate limit exceeded after retries")
 
 
-async def shopify_get(endpoint: str, params: dict = None):
-    return await _request_with_retry("get", endpoint, params=params or {})
+async def shopify_get(endpoint: str, params: dict = None, *, store_domain: str = None, access_token: str = None):
+    return await _request_with_retry("get", endpoint, store_domain=store_domain, access_token=access_token, params=params or {})
 
 
-async def shopify_post(endpoint: str, data: dict):
-    return await _request_with_retry("post", endpoint, json=data)
+async def shopify_post(endpoint: str, data: dict, *, store_domain: str = None, access_token: str = None):
+    return await _request_with_retry("post", endpoint, store_domain=store_domain, access_token=access_token, json=data)
 
 
-async def shopify_put(endpoint: str, data: dict):
-    return await _request_with_retry("put", endpoint, json=data)
+async def shopify_put(endpoint: str, data: dict, *, store_domain: str = None, access_token: str = None):
+    return await _request_with_retry("put", endpoint, store_domain=store_domain, access_token=access_token, json=data)
 
 
-async def shopify_delete(endpoint: str):
-    return await _request_with_retry("delete", endpoint)
+async def shopify_delete(endpoint: str, *, store_domain: str = None, access_token: str = None):
+    return await _request_with_retry("delete", endpoint, store_domain=store_domain, access_token=access_token)

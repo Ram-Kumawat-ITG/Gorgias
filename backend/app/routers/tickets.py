@@ -1,7 +1,9 @@
 # Ticket management router — CRUD operations for support tickets
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from typing import Optional
 from datetime import datetime, timezone
 from app.routers.auth import get_current_agent
+from app.config import settings
 from app.database import get_db
 from app.models.ticket import TicketCreate, TicketUpdate, TicketInDB
 from app.models.message import MessageCreate, MessageInDB
@@ -10,6 +12,52 @@ from app.services.ticket_service import apply_sla_policy, classify_ticket_type, 
 from app.services.activity_service import log_activity
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
+
+
+# ---------------------------------------------------------------------------
+# Multi-tenant Shopify context — reads optional headers, falls back to .env
+# ---------------------------------------------------------------------------
+
+class ShopifyContext:
+    """Resolved Shopify credentials for the current request."""
+    def __init__(self, store_domain: str, access_token: str):
+        self.store_domain = store_domain
+        self.access_token = access_token
+
+
+async def get_shopify_context(
+    x_store_domain: Optional[str] = Header(None),
+    x_access_token: Optional[str] = Header(None),
+) -> ShopifyContext:
+    """Extract Shopify credentials from request headers.
+
+    - Both headers present  → use them (external tenant).
+    - Neither header present → fall back to .env values (owner store).
+    - Only one header present → 422 error.
+    """
+    has_domain = bool(x_store_domain)
+    has_token = bool(x_access_token)
+
+    if has_domain != has_token:
+        raise HTTPException(
+            status_code=422,
+            detail="Both X-Store-Domain and X-Access-Token headers are required together. Pass both or neither.",
+        )
+
+    if has_domain and has_token:
+        # Basic format validation
+        if not x_store_domain.endswith(".myshopify.com"):
+            raise HTTPException(
+                status_code=422,
+                detail="X-Store-Domain must end with .myshopify.com (e.g. my-store.myshopify.com)",
+            )
+        return ShopifyContext(store_domain=x_store_domain, access_token=x_access_token)
+
+    # Fallback to .env values
+    return ShopifyContext(
+        store_domain=settings.shopify_store_domain,
+        access_token=settings.shopify_access_token,
+    )
 
 
 @router.get("")
@@ -59,9 +107,17 @@ async def list_tickets(
 
 
 @router.post("")
-async def create_ticket(data: TicketCreate, agent=Depends(get_current_agent)):
+async def create_ticket(
+    data: TicketCreate,
+    agent=Depends(get_current_agent),
+    ctx: ShopifyContext = Depends(get_shopify_context),
+):
     db = get_db()
-    customer = await fetch_and_sync_customer(data.customer_email)
+    customer = await fetch_and_sync_customer(
+        data.customer_email,
+        store_domain=ctx.store_domain,
+        access_token=ctx.access_token,
+    )
 
     admin_id = await _get_admin_agent_id()
     ticket = TicketInDB(
@@ -69,6 +125,7 @@ async def create_ticket(data: TicketCreate, agent=Depends(get_current_agent)):
         customer_email=data.customer_email,
         customer_name=data.customer_name or f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip() or None,
         shopify_customer_id=data.shopify_customer_id or customer.get("shopify_customer_id"),
+        store_domain=ctx.store_domain,
         channel=data.channel.value if hasattr(data.channel, "value") else data.channel,
         priority=data.priority.value if hasattr(data.priority, "value") else data.priority,
         tags=data.tags,

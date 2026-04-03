@@ -5,8 +5,12 @@ from app.services.shopify_client import shopify_get
 from app.models.customer import CustomerInDB
 
 
-async def fetch_and_sync_customer(email: str, force_refresh: bool = False) -> dict:
-    """Fetch customer from Shopify by email, cache in MongoDB."""
+async def fetch_and_sync_customer(email: str, force_refresh: bool = False, *, store_domain: str = None, access_token: str = None) -> dict:
+    """Fetch customer from Shopify by email, cache in MongoDB.
+
+    If *store_domain* and *access_token* are provided, the Shopify lookup
+    targets that store instead of the default one configured in .env.
+    """
     db = get_db()
 
     if not force_refresh:
@@ -16,7 +20,7 @@ async def fetch_and_sync_customer(email: str, force_refresh: bool = False) -> di
             return cached
 
     try:
-        data = await shopify_get("/customers/search.json", {"query": f"email:{email}"})
+        data = await shopify_get("/customers/search.json", {"query": f"email:{email}"}, store_domain=store_domain, access_token=access_token)
         customers = data.get("customers", [])
         if not customers:
             customer = CustomerInDB(email=email)
