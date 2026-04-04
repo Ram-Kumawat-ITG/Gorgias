@@ -217,6 +217,24 @@ export default function TicketDetailPage() {
           )}
         </div>
 
+        {/* Ticket Images */}
+        {ticket.images && ticket.images.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">📎 Attachments ({ticket.images.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {ticket.images.map((url, idx) => (
+                <img
+                  key={idx}
+                  src={url}
+                  alt={`Attachment ${idx + 1}`}
+                  className="w-24 h-24 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => window.open(url, '_blank')}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Pending Admin Action Banner */}
         {ticket.status === 'pending_admin_action' && (
           <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
@@ -267,32 +285,68 @@ export default function TicketDetailPage() {
                 </div>
               )}
             </div>
-            {/* Proof / media thumbnails */}
-            {messages.some(m => m.whatsapp_media_url || m.instagram_media_url) && (
-              <div className="mb-3">
-                <p className="text-xs font-semibold text-gray-500 mb-1.5">📸 Proof Uploaded</p>
-                <div className="flex flex-wrap gap-2">
-                  {messages.filter(m => m.sender_type === 'customer' && (m.whatsapp_media_url || m.whatsapp_media_id || m.instagram_media_url)).map((m, idx) => {
-                    const mediaType = m.whatsapp_media_type || m.instagram_media_type || ''
-                    const isImage = mediaType === 'image' || mediaType.startsWith('image/')
-                    const isWhatsApp = !!(m.whatsapp_media_url || m.whatsapp_media_id)
-                    const src = isWhatsApp
-                      ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`
-                      : (() => {
-                          const rawUrl = m.instagram_media_url
-                          return typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || rawUrl?.link || null
-                        })()
-                    return isImage ? (
-                      <img key={idx} src={src} alt="Proof" className="w-16 h-16 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80" onClick={() => window.open(src, '_blank')} />
-                    ) : (
-                      <a key={idx} href={src} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs hover:bg-gray-200">
-                        📎 {mediaType || 'file'}
-                      </a>
-                    )
-                  })}
+            {/* Proof images & videos — from ticket fields or message thread */}
+            {(() => {
+              const apiBase = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+              const images = ticket.pending_action_images || []
+              const videos = ticket.pending_action_videos || []
+              // Also scan messages for any media the ticket fields missed
+              const msgMedia = messages
+                .filter(m => m.sender_type === 'customer' && (m.whatsapp_media_url || m.whatsapp_media_id || m.instagram_media_url))
+                .map(m => ({
+                  id: m.id,
+                  type: m.whatsapp_media_type || m.instagram_media_type || '',
+                  isWa: !!(m.whatsapp_media_url || m.whatsapp_media_id),
+                }))
+              const hasProof = images.length > 0 || videos.length > 0 || msgMedia.length > 0
+              if (!hasProof) return null
+              return (
+                <div className="mb-3">
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">📸 Proof Uploaded ({images.length + videos.length} file{images.length + videos.length !== 1 ? 's' : ''})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {/* Ticket-level images (media IDs — proxy through backend) */}
+                    {images.map((ref, idx) => {
+                      const msgMatch = messages.find(m => m.whatsapp_media_id === ref || m.whatsapp_media_url === ref)
+                      const src = msgMatch
+                        ? `${apiBase}/media/whatsapp/${msgMatch.id}`
+                        : `${apiBase}/media/whatsapp/${ref}`
+                      return (
+                        <img key={`img-${idx}`} src={src} alt={`Proof ${idx + 1}`}
+                          className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => window.open(src, '_blank')} />
+                      )
+                    })}
+                    {/* Ticket-level videos */}
+                    {videos.map((ref, idx) => {
+                      const msgMatch = messages.find(m => m.whatsapp_media_id === ref || m.whatsapp_media_url === ref)
+                      const src = msgMatch
+                        ? `${apiBase}/media/whatsapp/${msgMatch.id}`
+                        : `${apiBase}/media/whatsapp/${ref}`
+                      return (
+                        <video key={`vid-${idx}`} src={src} controls
+                          className="w-32 h-20 rounded-lg border border-gray-200 object-cover" />
+                      )
+                    })}
+                    {/* Fallback: message-thread media not in ticket fields */}
+                    {images.length === 0 && videos.length === 0 && msgMedia.map((m, idx) => {
+                      const src = m.isWa
+                        ? `${apiBase}/media/whatsapp/${m.id}`
+                        : null
+                      if (!src) return null
+                      const isImg = m.type === 'image' || m.type.startsWith('image/')
+                      return isImg ? (
+                        <img key={`msg-${idx}`} src={src} alt="Proof"
+                          className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80"
+                          onClick={() => window.open(src, '_blank')} />
+                      ) : (
+                        <video key={`msg-${idx}`} src={src} controls
+                          className="w-32 h-20 rounded-lg border border-gray-200" />
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
             {!showRejectInput ? (
               <div className="flex gap-2">
                 <button

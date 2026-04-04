@@ -51,7 +51,9 @@ from app.routers import (
     instagram, merchants, whatsapp, sla, sla_policies,
 )
 from app.routers import media, gift_cards, external_tickets, admin_merchants
+from app.routers import chatbot_api
 
+app.include_router(chatbot_api.router)
 app.include_router(tickets.router)
 app.include_router(customers.router)
 app.include_router(orders.router)

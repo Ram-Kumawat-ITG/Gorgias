@@ -114,8 +114,12 @@ class TicketInDB(BaseModel):
     pending_action_email: Optional[str] = None
     pending_action_issue: Optional[str] = None         # damaged | wrong_item | missing | changed_mind | late | other
     pending_action_description: Optional[str] = None
+    pending_action_images: List[str] = []              # proof image URLs (WhatsApp media IDs or direct URLs)
+    pending_action_videos: List[str] = []              # proof video URLs
     pending_action_approved_at: Optional[datetime] = None
     pending_action_rejected_at: Optional[datetime] = None
     pending_action_rejection_reason: Optional[str] = None
+    # Optional image attachments on the ticket (URLs or media IDs)
+    images: List[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

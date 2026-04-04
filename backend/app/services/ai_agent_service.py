@@ -1,6 +1,5 @@
-# AI Agent service — analyzes conversations, detects intent, suggests actions (Groq + Llama)
+# AI Agent service — analyzes conversations, detects intent, suggests actions (multi-provider LLM)
 import json
-from groq import AsyncGroq
 from app.config import settings
 
 
@@ -307,9 +306,9 @@ escalation_request | general_inquiry
 """
 
 async def analyze_conversation(messages: list, subject: str = "", customer_email: str = "", shopify_order_id: str = None) -> dict:
-    if not settings.groq_api_key:
+    if not settings.groq_api_key and not settings.openai_api_key:
         return {
-            "summary": "AI analysis unavailable — Groq API key not configured.",
+            "summary": "AI analysis unavailable — no LLM API key configured.",
             "intent": "unknown",
             "actions": [],
         }
@@ -336,19 +335,17 @@ IMPORTANT: Use the Shopify Order ID provided above (if any) to pre-fill order_id
 
 Return ONLY valid JSON."""
 
-
     try:
-        client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        from app.services.llm_client import chat_complete
+        raw = await chat_complete(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=600,
             temperature=0.3,
+            json_mode=True,
         )
-        raw = response.choices[0].message.content.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]

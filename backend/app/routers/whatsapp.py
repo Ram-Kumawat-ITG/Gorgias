@@ -9,9 +9,6 @@ from app.services.whatsapp_service import (
     mark_as_read,
     download_media,
     send_text_message,
-    send_interactive_buttons,
-    send_image_with_buttons,
-    send_media_message,
 )
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp"])
@@ -487,22 +484,14 @@ async def _handle_messages(value: dict):
                     )
                     if ai_result:
                         wa_config = await get_whatsapp_config(merchant_id)
-                        # ai_result is {"reply": str, "buttons": list, "image_url": str}
+                        # ai_result is {"reply": str, "action_context": str}
                         reply_text = (ai_result.get("reply", "") if isinstance(ai_result, dict) else str(ai_result)).strip()
-                        buttons    = (ai_result.get("buttons") or []) if isinstance(ai_result, dict) else []
-                        image_url  = (ai_result.get("image_url") or "") if isinstance(ai_result, dict) else ""
+                        action_ctx = (ai_result.get("action_context", "") if isinstance(ai_result, dict) else "")
 
                         if not reply_text:
                             continue
 
-                        if image_url and buttons:
-                            wa_result = await send_image_with_buttons(from_phone, image_url, reply_text, buttons, wa_config)
-                        elif image_url:
-                            wa_result = await send_media_message(from_phone, "image", image_url, reply_text, wa_config)
-                        elif buttons:
-                            wa_result = await send_interactive_buttons(from_phone, reply_text, buttons, wa_config)
-                        else:
-                            wa_result = await send_text_message(from_phone, reply_text, wa_config)
+                        wa_result = await send_text_message(from_phone, reply_text, wa_config)
 
                         messages_list = wa_result.get("messages") or []
                         sent_id = messages_list[0].get("id") if messages_list else None
@@ -525,7 +514,10 @@ async def _handle_messages(value: dict):
                             whatsapp_message_id=sent_id,
                             whatsapp_status=wa_status,
                         )
-                        await db.messages.insert_one(reply_msg.model_dump())
+                        _reply_doc = reply_msg.model_dump()
+                        if action_ctx:
+                            _reply_doc["ai_action_context"] = action_ctx
+                        await db.messages.insert_one(_reply_doc)
 
                         # Stamp first_response_at if this is the first agent reply
                         if not ticket_doc.get("first_response_at"):

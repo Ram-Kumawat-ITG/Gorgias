@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     mongodb_url: str
     mongodb_db_name: str = "helpdesk"
+    # Seniors' chatbot database (Database B) — optional
+    mongodb_b_url: str = ""
+    mongodb_b_name: str = "chatbot"
     shopify_api_key: str = ""
     shopify_api_secret: str = ""
     shopify_store_domain: str = ""

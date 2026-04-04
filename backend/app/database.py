@@ -8,10 +8,17 @@ class Database:
     db = None
 
 
+class DatabaseB:
+    client: AsyncIOMotorClient = None
+    db = None
+
+
 db = Database()
+db_b = DatabaseB()
 
 
 async def connect_db():
+    # ── Database A (Gorgias) ──────────────────────────────────────────────────
     try:
         db.client = AsyncIOMotorClient(
             settings.mongodb_url,
@@ -19,25 +26,48 @@ async def connect_db():
             tz_aware=True,
         )
         db.db = db.client[settings.mongodb_db_name]
-        # Ping to verify the connection works
         await db.client.admin.command("ping")
         await create_indexes()
-        print("MongoDB connected")
+        print("MongoDB Database A connected")
     except Exception as e:
-        print(f"WARNING: MongoDB connection failed: {e}")
+        print(f"WARNING: MongoDB Database A connection failed: {e}")
         print("App will start but database operations will fail.")
-        # Still set db reference so app can start
         if db.client:
             db.db = db.client[settings.mongodb_db_name]
+
+    # ── Database B (Seniors' chatbot) ─────────────────────────────────────────
+    if settings.mongodb_b_url:
+        try:
+            db_b.client = AsyncIOMotorClient(
+                settings.mongodb_b_url,
+                serverSelectionTimeoutMS=5000,
+                tz_aware=True,
+            )
+            db_b.db = db_b.client[settings.mongodb_b_name]
+            await db_b.client.admin.command("ping")
+            print("MongoDB Database B (chatbot) connected")
+        except Exception as e:
+            print(f"WARNING: MongoDB Database B connection failed: {e}")
+            if db_b.client:
+                db_b.db = db_b.client[settings.mongodb_b_name]
+    else:
+        print("MongoDB Database B not configured (MONGODB_B_URL not set) — skipping")
 
 
 async def close_db():
     if db.client:
         db.client.close()
+    if db_b.client:
+        db_b.client.close()
 
 
 def get_db():
     return db.db
+
+
+def get_db_b():
+    """Return Database B (seniors' chatbot database). Returns None if not configured."""
+    return db_b.db
 
 
 async def create_indexes():

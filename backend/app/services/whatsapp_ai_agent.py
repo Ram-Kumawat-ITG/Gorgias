@@ -1,7 +1,6 @@
 # WhatsApp AI Sales Agent — processes inbound WhatsApp messages, detects Shopify intent,
 # executes Shopify operations, and sends conversational replies back to the customer.
 import json
-from groq import AsyncGroq
 from app.config import settings
 from app.services.shopify_client import shopify_get, shopify_post, shopify_put, ShopifyAPIError
 
@@ -1146,6 +1145,25 @@ async def _execute_action(
             import datetime as _dt
             _db = _get_db()
             if _db is not None:
+                # Collect proof images/videos from the conversation thread
+                _proof_images = []
+                _proof_videos = []
+                _media_msgs = _db.messages.find(
+                    {"ticket_id": ticket_id_ctx, "sender_type": "customer"},
+                    sort=[("created_at", 1)],
+                )
+                async for _m in _media_msgs:
+                    _mid = _m.get("whatsapp_media_id") or ""
+                    _murl = _m.get("whatsapp_media_url") or ""
+                    _mtype = (_m.get("whatsapp_media_type") or "").lower()
+                    _ref = _mid or _murl
+                    if not _ref:
+                        continue
+                    if _mtype in ("image", "image/jpeg", "image/png", "image/webp"):
+                        _proof_images.append(_ref)
+                    elif _mtype in ("video", "video/mp4", "video/3gpp"):
+                        _proof_videos.append(_ref)
+
                 await _db.tickets.update_one(
                     {"id": ticket_id_ctx},
                     {"$set": {
@@ -1156,6 +1174,8 @@ async def _execute_action(
                         "pending_action_email": email or "",
                         "pending_action_issue": issue,
                         "pending_action_description": evidence,
+                        "pending_action_images": _proof_images,
+                        "pending_action_videos": _proof_videos,
                         "updated_at": _dt.datetime.utcnow(),
                     }},
                 )
@@ -1195,8 +1215,28 @@ async def _execute_action(
 
         if ticket_id_ctx:
             from app.database import get_db as _get_db
+            import datetime as _dt
             _db = _get_db()
             if _db is not None:
+                # Collect proof images/videos from the conversation thread
+                _proof_images = []
+                _proof_videos = []
+                _media_msgs = _db.messages.find(
+                    {"ticket_id": ticket_id_ctx, "sender_type": "customer"},
+                    sort=[("created_at", 1)],
+                )
+                async for _m in _media_msgs:
+                    _mid = _m.get("whatsapp_media_id") or ""
+                    _murl = _m.get("whatsapp_media_url") or ""
+                    _mtype = (_m.get("whatsapp_media_type") or "").lower()
+                    _ref = _mid or _murl
+                    if not _ref:
+                        continue
+                    if _mtype in ("image", "image/jpeg", "image/png", "image/webp"):
+                        _proof_images.append(_ref)
+                    elif _mtype in ("video", "video/mp4", "video/3gpp"):
+                        _proof_videos.append(_ref)
+
                 await _db.tickets.update_one(
                     {"id": ticket_id_ctx},
                     {"$set": {
@@ -1207,7 +1247,9 @@ async def _execute_action(
                         "pending_action_email": email or "",
                         "pending_action_issue": issue,
                         "pending_action_description": evidence,
-                        "updated_at": __import__("datetime").datetime.utcnow(),
+                        "pending_action_images": _proof_images,
+                        "pending_action_videos": _proof_videos,
+                        "updated_at": _dt.datetime.utcnow(),
                     }},
                 )
 
@@ -1304,33 +1346,49 @@ async def process_whatsapp_message(
     - An interactive button message was sent directly (handled here)
     - Agent fails
     """
-    if not settings.groq_api_key:
-        print("WhatsApp AI Agent: GROQ_API_KEY is not set — chatbot disabled")
+    # Check that at least one LLM provider is configured
+    if not settings.groq_api_key and not settings.openai_api_key:
+        print("WhatsApp AI Agent: No LLM API key configured (GROQ_API_KEY or OPENAI_API_KEY) — chatbot disabled")
         return None
 
     history = await _get_conversation_history(ticket_id)
 
     chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    prev_role = "system"
     for msg in history:
         role = "user" if msg.get("sender_type") == "customer" else "assistant"
         body = (msg.get("body") or "").strip()
-        if body:
+        if not body:
+            continue
+
+        # Include the action context note if it was saved with the message
+        # This tells the LLM what action was taken and prevents repetition
+        action_ctx = (msg.get("ai_action_context") or "").strip()
+        if role == "assistant" and action_ctx:
+            body = f"[SYSTEM NOTE — previous action taken: {action_ctx}]\n{body}"
+
+        # Merge consecutive messages from the same role (LLM APIs require alternating)
+        if role == prev_role and chat_messages:
+            chat_messages[-1]["content"] += f"\n\n{body}"
+        else:
             chat_messages.append({"role": role, "content": body})
+            prev_role = role
 
     # Guard: ensure conversation ends on a user turn
     if not chat_messages or chat_messages[-1].get("role") != "user":
-        chat_messages.append({"role": "user", "content": current_message})
+        if prev_role == "user" and chat_messages:
+            chat_messages[-1]["content"] += f"\n\n{current_message}"
+        else:
+            chat_messages.append({"role": "user", "content": current_message})
 
     try:
-        client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        from app.services.llm_client import chat_complete
+        raw = await chat_complete(
             messages=chat_messages,
             max_tokens=600,
             temperature=0.3,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        raw = response.choices[0].message.content.strip()
 
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
@@ -1340,6 +1398,17 @@ async def process_whatsapp_message(
         result["_ticket_id"] = ticket_id  # inject for retention flow
 
         reply, interactive_payload = await _execute_action(result, customer_name, customer_phone)
+
+        # Build action context string so the LLM remembers what it did next turn
+        _action = result.get("action", "none")
+        _atype  = result.get("action_type") or ""
+        _issue  = result.get("issue") or ""
+        _ctx_parts = [f"action={_action}"]
+        if _atype:
+            _ctx_parts.append(f"action_type={_atype}")
+        if _issue:
+            _ctx_parts.append(f"issue={_issue}")
+        _action_context = ", ".join(_ctx_parts)
 
         # If the AI captured a real email this turn, sync it to MongoDB
         result_email = (result.get("email") or "").strip()
@@ -1398,7 +1467,7 @@ async def process_whatsapp_message(
                         interactive_payload["buttons"],
                         wa_cfg,
                     )
-                # Persist the interactive message to the ticket thread
+                # Persist the interactive message + action context to the ticket thread
                 _db = _get_db()
                 if _db is not None:
                     imsg_list = iresult.get("messages") or []
@@ -1412,19 +1481,23 @@ async def process_whatsapp_message(
                         whatsapp_message_id=isent_id,
                         whatsapp_status="sent" if isent_id else "failed",
                     )
-                    await _db.messages.insert_one(imsg_doc.model_dump())
+                    _doc = imsg_doc.model_dump()
+                    _doc["ai_action_context"] = _action_context
+                    await _db.messages.insert_one(_doc)
             except Exception as _int_err:
                 print(f"WhatsApp interactive message error: {_int_err}")
                 # Fall back to plain text
-                return reply or result.get("message") or None
+                _text = reply or result.get("message") or None
+                return {"reply": _text, "action_context": _action_context} if _text else None
             # Interactive was sent — caller should not send text again
             return None
 
-        return reply or result.get("message") or None
+        _text = reply or result.get("message") or None
+        return {"reply": _text, "action_context": _action_context} if _text else None
 
     except json.JSONDecodeError:
         if raw and len(raw) < 1000:
-            return raw
+            return {"reply": raw, "action_context": ""}
         return None
     except Exception as e:
         print(f"WhatsApp AI Agent error: {e}")
