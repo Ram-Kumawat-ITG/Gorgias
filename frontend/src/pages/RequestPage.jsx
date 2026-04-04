@@ -1180,7 +1180,7 @@ export default function RequestPage() {
                   {/* Intent row */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-gray-500">Intent:</span>
-                    <span className="badge bg-purple-100 text-purple-700 text-xs">{aiResult.intent}</span>
+                    <span className="badge bg-purple-100 text-purple-700 text-xs">{aiResult.intent?.primary || aiResult.intent}</span>
                   </div>
 
                   {/* Suggested Actions */}
