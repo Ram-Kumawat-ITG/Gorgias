@@ -15,7 +15,7 @@ import ReturnDetailPage from './pages/ReturnDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import RequestPage from './pages/RequestPage';
 import WhatsAppSettingsPage from './pages/WhatsAppSettingsPage';
-import InstagramSettingsPage from './pages/InstagramSettingsPage';
+// import InstagramSettingsPage from './pages/InstagramSettingsPage';
 import EmailSettingsPage from './pages/EmailSettingsPage';
 import SLAPage from './pages/SLAPage';
 import GiftCardPage from './pages/GiftCardPage';
@@ -43,7 +43,7 @@ export default function App() {
         <Route path="/gift-cards" element={<GiftCardPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/whatsapp-settings" element={<WhatsAppSettingsPage />} />
-        <Route path="/instagram-settings" element={<InstagramSettingsPage />} />
+        {/* <Route path="/instagram-settings" element={<InstagramSettingsPage />} /> */}
         <Route path="/email-settings" element={<EmailSettingsPage />} />
       </Route>
 

@@ -61,17 +61,17 @@ async def register_merchant(
         "whatsapp_access_token": "",
         "whatsapp_verify_token": "",
         "whatsapp_app_secret": "",
-        "instagram_page_id": "",
-        "instagram_access_token": "",
-        "instagram_app_secret": "",
-        "instagram_verify_token": "",
-        "twitter_api_key": "",
-        "twitter_api_secret": "",
-        "twitter_access_token": "",
-        "twitter_access_token_secret": "",
-        "twitter_bearer_token": "",
-        "twitter_env_name": "production",
-        "twitter_user_id": "",
+        # "instagram_page_id": "",        # disabled
+        # "instagram_access_token": "",   # disabled
+        # "instagram_app_secret": "",     # disabled
+        # "instagram_verify_token": "",   # disabled
+        # "twitter_api_key": "",          # disabled
+        # "twitter_api_secret": "",       # disabled
+        # "twitter_access_token": "",     # disabled
+        # "twitter_access_token_secret": "",  # disabled
+        # "twitter_bearer_token": "",     # disabled
+        # "twitter_env_name": "production",   # disabled
+        # "twitter_user_id": "",          # disabled
         # API key fields
         "api_key_hash": hash_api_key(raw_key),
         "api_key_prefix": get_key_prefix(raw_key),

@@ -1082,8 +1082,8 @@ export default function AiBanner({
             )
           })()}
 
-          {/* ── AI recommended actions ──────────────────────────────────────────── */}
-          {aiResult?.actions?.length > 0 && (
+          {/* ── AI recommended actions (disabled) ──────────────────────────────── */}
+          {false && aiResult?.actions?.length > 0 && (
             <Card title="AI recommended actions">
               <div className={clsx(
                 'grid gap-2',
@@ -1114,8 +1114,6 @@ export default function AiBanner({
                   </button>
                 ))}
               </div>
-
-              {/* Expanded confirmation panel */}
               {activeActionIndex !== null && aiResult.actions[activeActionIndex] && (
                 <ActionPanel
                   action={aiResult.actions[activeActionIndex]}

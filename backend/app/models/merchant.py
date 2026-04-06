@@ -18,19 +18,19 @@ class MerchantCreate(BaseModel):
     whatsapp_access_token: Optional[str] = ""
     whatsapp_verify_token: Optional[str] = ""
     whatsapp_app_secret: Optional[str] = ""
-    # Instagram config (per-merchant)
-    instagram_page_id: Optional[str] = ""
-    instagram_access_token: Optional[str] = ""
-    instagram_app_secret: Optional[str] = ""
-    instagram_verify_token: Optional[str] = ""
-    # Twitter config (per-merchant)
-    twitter_api_key: Optional[str] = ""
-    twitter_api_secret: Optional[str] = ""
-    twitter_access_token: Optional[str] = ""
-    twitter_access_token_secret: Optional[str] = ""
-    twitter_bearer_token: Optional[str] = ""
-    twitter_env_name: Optional[str] = "production"
-    twitter_user_id: Optional[str] = ""  # The Twitter account's user ID for webhook matching
+    # Instagram config (per-merchant) — disabled
+    # instagram_page_id: Optional[str] = ""
+    # instagram_access_token: Optional[str] = ""
+    # instagram_app_secret: Optional[str] = ""
+    # instagram_verify_token: Optional[str] = ""
+    # Twitter config (per-merchant) — disabled
+    # twitter_api_key: Optional[str] = ""
+    # twitter_api_secret: Optional[str] = ""
+    # twitter_access_token: Optional[str] = ""
+    # twitter_access_token_secret: Optional[str] = ""
+    # twitter_bearer_token: Optional[str] = ""
+    # twitter_env_name: Optional[str] = "production"
+    # twitter_user_id: Optional[str] = ""
 
 
 class MerchantUpdate(BaseModel):
@@ -47,19 +47,19 @@ class MerchantUpdate(BaseModel):
     whatsapp_access_token: Optional[str] = None
     whatsapp_verify_token: Optional[str] = None
     whatsapp_app_secret: Optional[str] = None
-    # Instagram config
-    instagram_page_id: Optional[str] = None
-    instagram_access_token: Optional[str] = None
-    instagram_app_secret: Optional[str] = None
-    instagram_verify_token: Optional[str] = None
-    # Twitter config
-    twitter_api_key: Optional[str] = None
-    twitter_api_secret: Optional[str] = None
-    twitter_access_token: Optional[str] = None
-    twitter_access_token_secret: Optional[str] = None
-    twitter_bearer_token: Optional[str] = None
-    twitter_env_name: Optional[str] = None
-    twitter_user_id: Optional[str] = None
+    # Instagram config — disabled
+    # instagram_page_id: Optional[str] = None
+    # instagram_access_token: Optional[str] = None
+    # instagram_app_secret: Optional[str] = None
+    # instagram_verify_token: Optional[str] = None
+    # Twitter config — disabled
+    # twitter_api_key: Optional[str] = None
+    # twitter_api_secret: Optional[str] = None
+    # twitter_access_token: Optional[str] = None
+    # twitter_access_token_secret: Optional[str] = None
+    # twitter_bearer_token: Optional[str] = None
+    # twitter_env_name: Optional[str] = None
+    # twitter_user_id: Optional[str] = None
 
 
 class MerchantInDB(BaseModel):
@@ -76,19 +76,19 @@ class MerchantInDB(BaseModel):
     whatsapp_access_token: str = ""
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
-    # Instagram config
-    instagram_page_id: str = ""
-    instagram_access_token: str = ""
-    instagram_app_secret: str = ""
-    instagram_verify_token: str = ""
-    # Twitter config
-    twitter_api_key: str = ""
-    twitter_api_secret: str = ""
-    twitter_access_token: str = ""
-    twitter_access_token_secret: str = ""
-    twitter_bearer_token: str = ""
-    twitter_env_name: str = "production"
-    twitter_user_id: str = ""
+    # Instagram config — disabled
+    # instagram_page_id: str = ""
+    # instagram_access_token: str = ""
+    # instagram_app_secret: str = ""
+    # instagram_verify_token: str = ""
+    # Twitter config — disabled
+    # twitter_api_key: str = ""
+    # twitter_api_secret: str = ""
+    # twitter_access_token: str = ""
+    # twitter_access_token_secret: str = ""
+    # twitter_bearer_token: str = ""
+    # twitter_env_name: str = "production"
+    # twitter_user_id: str = ""
     # API key authentication fields
     api_key_hash: str = ""
     api_key_prefix: str = ""

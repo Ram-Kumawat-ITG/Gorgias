@@ -5,7 +5,7 @@ import api from '../api/client';
 import CustomerSidebar from '../components/CustomerSidebar';
 
 import MacroPicker from '../components/MacroPicker';
-import { Mail, MessageSquare, FileText, Check, CheckCheck, Clock, AlertCircle, Camera } from 'lucide-react';
+import { Mail, MessageSquare, FileText, Check, CheckCheck, Clock, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
 
 const MSG_COLORS = {
@@ -151,15 +151,15 @@ export default function TicketDetailPage() {
               <span className="badge bg-green-100 text-green-700 flex items-center gap-1">
                 <MessageSquare size={12} /> WhatsApp
               </span>
-            ) : ticket.channel === 'instagram' ? (
-              <span className="badge bg-pink-100 text-pink-700 flex items-center gap-1">
-                <Camera size={12} /> Instagram
-              </span>
-            ) : ticket.channel === 'twitter' ? (
-              <span className="badge bg-sky-100 text-sky-700 flex items-center gap-1">
-                <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
-                {ticket.twitter_type === 'mention' ? 'Twitter @mention' : 'Twitter DM'}
-              </span>
+            // ) : ticket.channel === 'instagram' ? (
+            //   <span className="badge bg-pink-100 text-pink-700 flex items-center gap-1">
+            //     <Camera size={12} /> Instagram
+            //   </span>
+            // ) : ticket.channel === 'twitter' ? (
+            //   <span className="badge bg-sky-100 text-sky-700 flex items-center gap-1">
+            //     <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+            //     {ticket.twitter_type === 'mention' ? 'Twitter @mention' : 'Twitter DM'}
+            //   </span>
             ) : ticket.channel === 'email' ? (
               <span className="badge bg-gray-100 text-gray-600 flex items-center gap-1">
                 <Mail size={12} /> Email
@@ -172,12 +172,12 @@ export default function TicketDetailPage() {
             {ticket.channel === 'whatsapp' && ticket.whatsapp_phone && (
               <span className="text-xs text-gray-400">+{ticket.whatsapp_phone}</span>
             )}
-            {ticket.channel === 'instagram' && ticket.instagram_user_id && (
+            {/* {ticket.channel === 'instagram' && ticket.instagram_user_id && (
               <span className="text-xs text-gray-400">ID: {ticket.instagram_user_id}</span>
-            )}
-            {ticket.channel === 'twitter' && ticket.twitter_username && (
+            )} */}
+            {/* {ticket.channel === 'twitter' && ticket.twitter_username && (
               <span className="text-xs text-gray-400">@{ticket.twitter_username}</span>
-            )}
+            )} */}
           </div>
           {ticket.channel === 'whatsapp' && ticket.whatsapp_last_customer_msg_at && (
             <div className="mt-1">
@@ -197,7 +197,7 @@ export default function TicketDetailPage() {
               })()}
             </div>
           )}
-          {ticket.channel === 'instagram' && ticket.instagram_last_customer_msg_at && (
+          {/* {ticket.channel === 'instagram' && ticket.instagram_last_customer_msg_at && (
             <div className="mt-1">
               {(() => {
                 const lastMsg = new Date(ticket.instagram_last_customer_msg_at);
@@ -214,7 +214,7 @@ export default function TicketDetailPage() {
                 );
               })()}
             </div>
-          )}
+          )} */}
         </div>
 
         {/* Ticket Images */}
@@ -445,13 +445,22 @@ export default function TicketDetailPage() {
               {m.attachments && m.attachments.length > 0 && (
                 <div className={`flex flex-wrap gap-2 ${m.body ? 'mt-2' : ''}`}>
                   {m.attachments.map((url, idx) => (
-                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer">
+                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer"
+                       className="block w-24 h-24 rounded-lg border border-gray-200 overflow-hidden hover:opacity-90 transition-opacity flex-shrink-0">
                       <img
                         src={url}
                         alt={`Attachment ${idx + 1}`}
                         loading="lazy"
-                        className="w-24 h-24 object-cover rounded-lg border border-gray-200 hover:opacity-90 transition-opacity"
-                        onError={e => { e.currentTarget.style.display = 'none'; }}
+                        className="w-full h-full object-cover"
+                        onError={e => {
+                          e.currentTarget.style.display = 'none';
+                          e.currentTarget.parentElement.classList.add('broken-img');
+                          e.currentTarget.parentElement.innerHTML =
+                            `<div class="w-full h-full flex flex-col items-center justify-center bg-gray-100 gap-1 p-1">` +
+                            `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>` +
+                            `<span class="text-xs text-gray-400 text-center leading-tight">View image</span>` +
+                            `</div>`;
+                        }}
                       />
                     </a>
                   ))}
@@ -465,7 +474,7 @@ export default function TicketDetailPage() {
                   {m.whatsapp_status === 'failed' && <><AlertCircle size={12} className="text-red-500" /> Failed</>}
                 </span>
               )}
-              {m.twitter_media_url && (
+              {/* {m.twitter_media_url && (
                 <a href={m.twitter_media_url} target="_blank" rel="noopener noreferrer"
                    className="text-xs text-brand-600 hover:underline mt-1 inline-block">
                   View {m.twitter_media_type || 'media'}
@@ -488,7 +497,7 @@ export default function TicketDetailPage() {
                   {m.instagram_status === 'sent' && <><Check size={12} /> Sent</>}
                   {m.instagram_status === 'read' && <><CheckCheck size={12} className="text-pink-500" /> Seen</>}
                 </span>
-              )}
+              )} */}
             </div>
           ))}
         </div>
