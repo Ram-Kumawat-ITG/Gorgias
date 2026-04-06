@@ -205,7 +205,7 @@ function computePolicies(shopifyOrder, selectedTicket) {
 
 function buildTimeline(shopifyOrder) {
   if (!shopifyOrder) return []
-  const isPaid = shopifyOrder.financial_status === 'paid'
+  const isPaid = ['paid', 'partially_refunded', 'refunded', 'partially_paid'].includes(shopifyOrder.financial_status)
   const isPending = shopifyOrder.financial_status === 'pending'
   const isCancelled = !!shopifyOrder.cancelled_at
   const isFulfilled = shopifyOrder.fulfillment_status === 'fulfilled'
@@ -371,9 +371,18 @@ function getQuickActions(selectedTicket, shopifyOrder) {
   const currency = shopifyOrder?.currency === 'INR' ? '₹' : '$'
   const amount = shopifyOrder?.total_price || '0'
   const itemName = shopifyOrder?.line_items?.[0]?.title || 'item'
+  const subject = (selectedTicket?.subject || '').toLowerCase()
 
-  const isReplace = ticketType === 'replace' || pendingType === 'replace'
-  const isRefundReturn = ['return', 'refund', 'cancel_requested', 'cancel'].includes(ticketType)
+  // Subject-based detection takes priority over ticket_type (AI classification can be wrong)
+  const subjectIsReplace = subject.includes('replacement') || subject.includes('replace')
+  const subjectIsRefund = !subjectIsReplace && subject.includes('refund')
+  const subjectIsReturn = !subjectIsReplace && subject.includes('return')
+
+  const isReplace = ticketType === 'replace' || pendingType === 'replace' || subjectIsReplace
+  const isRefundReturn = !isReplace && (
+    ['return', 'refund', 'cancel_requested', 'cancel'].includes(ticketType)
+    || subjectIsRefund || subjectIsReturn
+  )
 
   if (isReplace) {
     return {
@@ -438,6 +447,8 @@ export default function AiBanner({
   handleFieldChange,
   inventory,
   inventoryLoading,
+  inventoryError,
+  onRetryInventory,
   sendPrompt,
   approveAction,
   onClear,
@@ -469,11 +480,54 @@ export default function AiBanner({
   const [exchangeSuccess, setExchangeSuccess] = useState(null)
   const [exchangeError, setExchangeError] = useState(null)
 
+  // Replacement approval
+  const [replacementLoading, setReplacementLoading] = useState(false)
+  const [replacementSuccess, setReplacementSuccess] = useState(null)   // new order name e.g. "#1749"
+  const [replacementError, setReplacementError] = useState(null)
+
   // Prevent body scroll when modal is open
   useEffect(() => {
     document.body.style.overflow = showPartialModal ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [showPartialModal])
+
+  // ── Approve replacement handler ──────────────────────────────────────────
+  async function handleApproveReplacement(qa) {
+    if (!shopifyOrder?.id || replacementLoading || replacementSuccess) return
+    if (!shopifyOrder.customer_id) {
+      setReplacementError('Cannot create replacement — customer ID missing from order.')
+      return
+    }
+    setReplacementLoading(true)
+    setReplacementError(null)
+    try {
+      const lineItems = (shopifyOrder.line_items || []).map(li => ({
+        title: li.title || 'Item',
+        quantity: li.quantity || 1,
+        price: '0.00',                          // free replacement — customer pays nothing
+        variant_id: li.variant_id || null,
+      }))
+      const originalOrderName = shopifyOrder.name || `#${shopifyOrder.order_number}`
+      const res = await ordersApi.create({
+        customer_id: shopifyOrder.customer_id,
+        line_items: lineItems,
+        note: `Replacement for ${originalOrderName} — approved by agent`,
+        tags: 'replacement',
+        financial_status: 'paid',               // marked paid so no customer payment needed
+        merchant_id: selectedTicket?.merchant_id || null,
+      })
+      const newOrderName = res.data?.name || res.data?.order_number ? `#${res.data.order_number}` : 'created'
+      setReplacementSuccess(`Replacement order ${newOrderName} created — ready to fulfill`)
+      if (sendPrompt && qa?.buttons?.find(b => b.id === 'approve')?.prompt) {
+        sendPrompt(qa.buttons.find(b => b.id === 'approve').prompt)
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Failed to create replacement order'
+      setReplacementError(msg)
+    } finally {
+      setReplacementLoading(false)
+    }
+  }
 
   // ── Full refund handler ───────────────────────────────────────────────────
   async function handleFullRefund(qa) {
@@ -539,7 +593,7 @@ export default function AiBanner({
     setExchangeVariantsLoading(true)
     setExchangeVariantsError(null)
     try {
-      const res = await shopifyApi.getProductVariants(productId)
+      const res = await shopifyApi.getProductVariants(productId, selectedTicket?.merchant_id || null)
       setExchangeVariants(res.data.variants || [])
     } catch (err) {
       setExchangeVariantsError('Could not load product variants')
@@ -787,14 +841,23 @@ export default function AiBanner({
                     <div className="w-3.5 h-3.5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
                     Fetching stock…
                   </div>
+                ) : inventoryError ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-red-500">Failed to load inventory</p>
+                    {onRetryInventory && (
+                      <button onClick={onRetryInventory}
+                        className="text-xs text-brand-600 underline hover:text-brand-800">
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 ) : shopifyOrder.line_items?.length > 0 ? (
                   <div className="space-y-2.5">
                     {shopifyOrder.line_items.map((li, idx) => {
                       const variantId = li.variant_id ? String(li.variant_id) : null
                       const inv = variantId ? inventory?.find(v => v.variant_id === variantId) : null
-                      // Fix: show quantity regardless of inventory_management type
-                      const qty = inv?.inventory_quantity
-                      const hasQty = qty !== null && qty !== undefined && inv !== undefined
+                      const qty = inv?.inventory_quantity  // null = not tracked, number = actual stock
+                      const tracked = inv?.tracked !== false && inv !== undefined
                       return (
                         <div key={idx} className="border-b border-gray-50 pb-2.5 last:border-0 last:pb-0">
                           <div className="flex items-start justify-between gap-2">
@@ -812,8 +875,10 @@ export default function AiBanner({
                           </div>
                           <div className="mt-1.5 flex items-center justify-between text-xs">
                             <span className="text-gray-400">Stock</span>
-                            {!hasQty ? (
+                            {inv === undefined || inv === null ? (
                               <span className="text-gray-400">—</span>
+                            ) : qty === null || qty === undefined ? (
+                              <span className="text-gray-400 italic">Not tracked</span>
                             ) : qty > 10 ? (
                               <span className="font-medium text-green-600">{qty} available</span>
                             ) : qty > 0 ? (
@@ -860,9 +925,9 @@ export default function AiBanner({
               if (btn.id === 'full_refund') { handleFullRefund(qa); return }
               if (btn.id === 'partial_refund') { setPartialAmount(''); setPartialReason(''); setPartialError(null); setPartialSuccess(null); setShowPartialModal(true); return }
               if (btn.id === 'exchange') { openExchangePanel(); return }
-              // approve replacement, wait, escalate, refund_instead → sendPrompt only (+ approveAction for approve)
+              if (btn.id === 'approve') { handleApproveReplacement(qa); return }
+              // wait, escalate, refund_instead → sendPrompt only
               if (sendPrompt && btn.prompt) sendPrompt(btn.prompt)
-              if (btn.action === 'approve' && approveAction) approveAction()
             }
 
             return (
@@ -872,7 +937,21 @@ export default function AiBanner({
                   <p className="text-xs text-gray-400 mb-3 italic">Awaiting request classification — run AI analysis to enable actions</p>
                 )}
 
-                {/* Full-refund success banner */}
+                {/* Replacement success/error banners */}
+                {replacementSuccess && (
+                  <div className="mb-3 flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+                    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {replacementSuccess}
+                  </div>
+                )}
+                {replacementError && (
+                  <div className="mb-3 flex items-center justify-between gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                    <span>{replacementError}</span>
+                    <button onClick={() => setReplacementError(null)} className="underline shrink-0">Retry</button>
+                  </div>
+                )}
+
+                {/* Full-refund success/error banners */}
                 {refundSuccess && (
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-700">
                     <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -889,7 +968,10 @@ export default function AiBanner({
                 <div className="grid grid-cols-4 gap-2">
                   {qa.buttons.map((btn) => {
                     const isFullRefund = btn.id === 'full_refund'
-                    const btnDisabled = isDisabled || (isFullRefund && (refundLoading || !!refundSuccess))
+                    const isApprove = btn.id === 'approve'
+                    const btnDisabled = isDisabled
+                      || (isFullRefund && (refundLoading || !!refundSuccess))
+                      || (isApprove && (replacementLoading || !!replacementSuccess))
                     return (
                       <button
                         key={btn.id}
@@ -905,6 +987,8 @@ export default function AiBanner({
                       >
                         {isFullRefund && refundLoading
                           ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Processing…</>
+                          : isApprove && replacementLoading
+                          ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Creating order…</>
                           : btn.label}
                       </button>
                     )

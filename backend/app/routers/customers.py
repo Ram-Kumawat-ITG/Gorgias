@@ -5,6 +5,7 @@ from app.database import get_db
 from app.services.shopify_client import (
     shopify_get, shopify_post, shopify_put, shopify_delete, ShopifyAPIError,
 )
+from app.services.merchant_shopify import get_shopify_creds
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -150,16 +151,20 @@ def _resolve_country_code(raw: str) -> str:
 async def list_customers(
     search: str = "",
     limit: int = Query(50, ge=1, le=250),
+    merchant_id: Optional[str] = Query(None),
     agent=Depends(get_current_agent),
 ):
     """Fetch customers from Shopify in real time. No MongoDB persistence."""
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
         params = {"limit": limit}
         if search:
             params["query"] = search
-            data = await shopify_get("/customers/search.json", params)
+            data = await shopify_get("/customers/search.json", params,
+                                     store_domain=store_domain, access_token=access_token)
         else:
-            data = await shopify_get("/customers.json", params)
+            data = await shopify_get("/customers.json", params,
+                                     store_domain=store_domain, access_token=access_token)
         customers = [_format_customer(c) for c in data.get("customers", [])]
         return {"customers": customers, "total": len(customers)}
     except ShopifyAPIError as e:
@@ -168,15 +173,19 @@ async def list_customers(
 
 # ─── GET ONE ───
 @router.get("/{customer_id}")
-async def get_customer(customer_id: str, agent=Depends(get_current_agent)):
+async def get_customer(customer_id: str, merchant_id: Optional[str] = Query(None),
+                       agent=Depends(get_current_agent)):
     """Fetch a single customer + their orders from Shopify in real time."""
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        cust_data = await shopify_get(f"/customers/{customer_id}.json")
+        cust_data = await shopify_get(f"/customers/{customer_id}.json",
+                                      store_domain=store_domain, access_token=access_token)
         customer = _format_customer(cust_data.get("customer", {}))
 
         orders_data = await shopify_get(
             f"/customers/{customer_id}/orders.json",
             {"status": "any", "limit": 50},
+            store_domain=store_domain, access_token=access_token,
         )
         orders = []
         for o in orders_data.get("orders", []):

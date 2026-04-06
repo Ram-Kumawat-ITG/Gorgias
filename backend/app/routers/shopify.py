@@ -8,6 +8,8 @@ from app.models.message import MessageInDB
 from app.services.shopify_client import shopify_get
 from app.services.shopify_sync import fetch_and_sync_customer
 from app.services.activity_service import log_activity
+from app.services.merchant_shopify import get_shopify_creds
+from typing import Optional
 
 router = APIRouter(prefix="/shopify", tags=["Shopify"])
 
@@ -167,31 +169,66 @@ async def sync_orders(
 @router.get("/inventory")
 async def get_inventory_levels(
     variant_ids: str = Query(..., description="Comma-separated Shopify variant IDs"),
+    merchant_id: Optional[str] = Query(None),
     agent=Depends(get_current_agent),
 ):
-    """Fetch inventory quantities for Shopify product variants."""
+    """Fetch inventory quantities using inventory_levels API (inventory_quantity is deprecated in 2024-01)."""
     ids = [v.strip() for v in variant_ids.split(",") if v.strip()]
     if not ids:
         return {"inventory": []}
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        data = await shopify_get(
+        # Step 1: fetch variants to get inventory_item_id (needed for inventory_levels lookup)
+        variant_data = await shopify_get(
             "/variants.json",
-            {"ids": ",".join(ids), "fields": "id,title,sku,inventory_quantity,inventory_management,inventory_policy"},
+            {"ids": ",".join(ids), "fields": "id,title,sku,inventory_item_id,inventory_management,inventory_policy"},
+            store_domain=store_domain, access_token=access_token,
         )
-        variants = data.get("variants", [])
-        return {
-            "inventory": [
-                {
-                    "variant_id": str(v["id"]),
-                    "title": v.get("title") or "",
-                    "sku": v.get("sku") or "",
-                    "inventory_quantity": v.get("inventory_quantity", 0),
-                    "inventory_management": v.get("inventory_management") or "",
-                    "inventory_policy": v.get("inventory_policy") or "deny",
-                }
-                for v in variants
-            ]
-        }
+        variants = variant_data.get("variants", [])
+        if not variants:
+            return {"inventory": []}
+
+        # Build map: inventory_item_id -> variant
+        item_id_to_variant = {}
+        for v in variants:
+            inv_item_id = v.get("inventory_item_id")
+            if inv_item_id:
+                item_id_to_variant[str(inv_item_id)] = v
+
+        inventory_item_ids = list(item_id_to_variant.keys())
+
+        # Step 2: fetch actual available stock from inventory_levels (requires read_inventory scope)
+        qty_by_item: dict = {}
+        if inventory_item_ids:
+            levels_data = await shopify_get(
+                "/inventory_levels.json",
+                {"inventory_item_ids": ",".join(inventory_item_ids), "limit": 250},
+                store_domain=store_domain, access_token=access_token,
+            )
+            for level in levels_data.get("inventory_levels", []):
+                item_id = str(level.get("inventory_item_id", ""))
+                available = level.get("available")
+                if available is not None:
+                    qty_by_item[item_id] = qty_by_item.get(item_id, 0) + int(available)
+
+        # Build response: one entry per variant with real inventory quantities
+        result = []
+        for v in variants:
+            inv_item_id = str(v.get("inventory_item_id") or "")
+            inv_mgmt = v.get("inventory_management") or ""
+            # qty is None when item has no inventory levels (not tracked or no read_inventory scope)
+            qty = qty_by_item.get(inv_item_id) if inv_item_id in qty_by_item else None
+            result.append({
+                "variant_id": str(v["id"]),
+                "title": v.get("title") or "",
+                "sku": v.get("sku") or "",
+                "inventory_quantity": qty,
+                "inventory_management": inv_mgmt,
+                "inventory_policy": v.get("inventory_policy") or "deny",
+                "tracked": inv_mgmt == "shopify",
+            })
+
+        return {"inventory": result}
     except Exception as e:
         return {"inventory": [], "error": str(e)}
 
@@ -199,11 +236,14 @@ async def get_inventory_levels(
 @router.get("/products/{product_id}/variants")
 async def get_product_variants(
     product_id: str,
+    merchant_id: Optional[str] = Query(None),
     agent=Depends(get_current_agent),
 ):
     """Fetch all variants for a Shopify product with inventory levels."""
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        data = await shopify_get(f"/products/{product_id}.json", {"fields": "id,title,variants"})
+        data = await shopify_get(f"/products/{product_id}.json", {"fields": "id,title,variants"},
+                                 store_domain=store_domain, access_token=access_token)
         product = data.get("product", {})
         variants = product.get("variants", [])
         return {

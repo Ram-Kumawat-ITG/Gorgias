@@ -1,7 +1,8 @@
 # External ticket creation router — allows registered external Shopify stores
 # to create tickets via API key + shop domain verification (MongoDB handshake).
 from fastapi import APIRouter, Depends, Header, HTTPException
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, List
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models.ticket import TicketCreate, TicketInDB
@@ -10,6 +11,7 @@ from app.services.shopify_sync import fetch_and_sync_customer
 from app.services.ticket_service import apply_sla_policy, classify_ticket_type, _get_admin_agent_id
 from app.services.activity_service import log_activity
 from app.services.api_key_service import verify_api_key
+from app.services.merchant_shopify import get_shopify_creds
 
 router = APIRouter(prefix="/api/external", tags=["External"])
 
@@ -78,29 +80,39 @@ async def create_external_ticket(
 
     The calling store passes X-Shop-Domain in the header. No access token is
     needed — trust is established by checking the merchants collection.
+
+    Accepts both `initial_message` and `message` (preferred alias). The
+    `images` field accepts a list of publicly-accessible image URLs that are
+    stored as message attachments and displayed inline in the chat UI.
     """
     db = get_db()
 
-    # Look up the merchant record to get their merchant_id
+    # Look up the merchant record to get their merchant_id + Shopify credentials
     merchant = await db.merchants.find_one({"shopify_store_domain": shop_domain})
     merchant_id = merchant["id"] if merchant else None
 
-    # Sync customer — uses default (.env) Shopify credentials for lookup
-    customer = await fetch_and_sync_customer(data.customer_email)
+    # Use per-merchant Shopify credentials for customer sync
+    store_domain, access_token = await get_shopify_creds(merchant_id=merchant_id, store_domain=shop_domain)
+    customer = await fetch_and_sync_customer(
+        data.customer_email,
+        store_domain=store_domain,
+        access_token=access_token,
+    )
 
     admin_id = await _get_admin_agent_id()
 
     ticket = TicketInDB(
         subject=data.subject,
         customer_email=data.customer_email,
-        customer_name=data.customer_name or f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip() or None,
+        customer_name=data.customer_name or f"{customer.get('first_name') or ''} {customer.get('last_name') or ''}".strip() or None,
         shopify_customer_id=data.shopify_customer_id or customer.get("shopify_customer_id"),
         merchant_id=merchant_id,
+        store_domain=store_domain or shop_domain,
         source_store=shop_domain,
         channel=data.channel.value if hasattr(data.channel, "value") else data.channel,
         priority=data.priority.value if hasattr(data.priority, "value") else data.priority,
         tags=data.tags,
-        ticket_type=classify_ticket_type(data.subject, data.initial_message or ""),
+        ticket_type=classify_ticket_type(data.subject, data.initial_message or data.message or ""),
         assignee_id=admin_id,
     )
 
@@ -108,12 +120,18 @@ async def create_external_ticket(
     ticket_doc = await apply_sla_policy(ticket_doc)
     await db.tickets.insert_one(ticket_doc)
 
-    # Create initial message if provided
-    if data.initial_message:
+    # `message` is the preferred field; fall back to `initial_message` for backward compat
+    body = data.message or data.initial_message
+    images = [url for url in (data.images or []) if url and url.startswith("http")]
+
+    if body or images:
+        msg_body = body or ""
         msg = MessageInDB(
             ticket_id=ticket.id,
-            body=data.initial_message,
+            body=msg_body,
             sender_type="customer",
+            attachments=images,
+            channel="whatsapp" if data.channel == "whatsapp" else None,
         )
         await db.messages.insert_one(msg.model_dump())
 
@@ -138,3 +156,76 @@ async def create_external_ticket(
 
     ticket_doc.pop("_id", None)
     return ticket_doc
+
+
+# ---------------------------------------------------------------------------
+# Follow-up message endpoint — App A adds messages to an existing ticket
+# ---------------------------------------------------------------------------
+
+class ExternalMessageCreate(BaseModel):
+    message: str
+    images: List[str] = []
+
+
+@router.post("/tickets/{ticket_id}/messages")
+async def add_external_message(
+    ticket_id: str,
+    data: ExternalMessageCreate,
+    shop_domain: str = Depends(verify_merchant),
+):
+    """Add a follow-up customer message (with optional image URLs) to an existing ticket.
+
+    The ticket must belong to the authenticated store (matched via source_store or
+    store_domain). Returns the created message document.
+
+    Validation:
+    - `message` is required and must be a non-empty string
+    - `images` is optional; each entry must be an http/https URL (invalid entries silently dropped)
+    - Ticket must exist and belong to this store
+    """
+    if not data.message.strip():
+        raise HTTPException(status_code=422, detail="message must not be empty")
+
+    db = get_db()
+
+    ticket = await db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Confirm ticket belongs to this store
+    ticket_store = ticket.get("source_store") or ticket.get("store_domain") or ""
+    if ticket_store and ticket_store != shop_domain:
+        raise HTTPException(status_code=403, detail="Ticket does not belong to this store")
+
+    images = [url for url in (data.images or []) if url and url.startswith("http")]
+
+    msg = MessageInDB(
+        ticket_id=ticket_id,
+        body=data.message.strip(),
+        sender_type="customer",
+        attachments=images,
+        channel=ticket.get("channel") if ticket.get("channel") in ("whatsapp", "email") else None,
+    )
+    msg_doc = msg.model_dump()
+    await db.messages.insert_one(msg_doc)
+
+    # Reopen ticket if it was resolved/closed so agent sees the new message
+    if ticket.get("status") in ("resolved", "closed"):
+        await db.tickets.update_one(
+            {"id": ticket_id},
+            {"$set": {"status": "open", "updated_at": datetime.now(timezone.utc)}},
+        )
+
+    await log_activity(
+        entity_type="ticket",
+        entity_id=ticket_id,
+        event="message.added",
+        actor_type="external_store",
+        actor_id=shop_domain,
+        actor_name=shop_domain,
+        description=f"Follow-up message added from {shop_domain}",
+        customer_email=ticket.get("customer_email"),
+    )
+
+    msg_doc.pop("_id", None)
+    return msg_doc

@@ -1,9 +1,11 @@
 # Orders router — complete draft order + regular order management via Shopify API
+import asyncio
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.routers.auth import get_current_agent
 from app.services.shopify_client import (
     shopify_get, shopify_post, shopify_put, shopify_delete, ShopifyAPIError,
 )
+from app.services.merchant_shopify import get_shopify_creds
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -27,12 +29,14 @@ class OrderCreatePayload(BaseModel):
     note: Optional[str] = None
     tags: Optional[str] = None
     financial_status: Optional[str] = "pending"  # "paid" | "pending"
+    merchant_id: Optional[str] = None
 
 
 class CancelPayload(BaseModel):
     reason: str = "other"  # customer, inventory, fraud, declined, other
     restock: bool = True
     email: bool = False
+    merchant_id: Optional[str] = None
 
 
 class RefundLineItem(BaseModel):
@@ -47,6 +51,7 @@ class RefundPayload(BaseModel):
     custom_amount: Optional[str] = None
     note: Optional[str] = None
     notify: bool = True
+    merchant_id: Optional[str] = None
 
 
 class FulfillPayload(BaseModel):
@@ -55,6 +60,7 @@ class FulfillPayload(BaseModel):
     tracking_url: Optional[str] = None
     tracking_company: Optional[str] = None
     notify: bool = True
+    merchant_id: Optional[str] = None
 
 
 class OrderUpdatePayload(BaseModel):
@@ -99,6 +105,7 @@ def _format_order(o: dict) -> dict:
         "cancelled_at": o.get("cancelled_at"),
         "cancel_reason": o.get("cancel_reason"),
         "closed_at": o.get("closed_at"),
+        "processed_at": o.get("processed_at"),
         "line_items": [
             {
                 "id": str(li["id"]),
@@ -107,8 +114,8 @@ def _format_order(o: dict) -> dict:
                 "quantity": li.get("quantity"),
                 "price": li.get("price"),
                 "sku": li.get("sku"),
-                "variant_id": str(li.get("variant_id") or ""),
-                "product_id": str(li.get("product_id") or ""),
+                "variant_id": str(li["variant_id"]) if li.get("variant_id") else None,
+                "product_id": str(li["product_id"]) if li.get("product_id") else None,
                 "fulfillable_quantity": li.get("fulfillable_quantity", 0),
                 "fulfillment_status": li.get("fulfillment_status"),
             }
@@ -179,8 +186,8 @@ def _format_draft(d: dict) -> dict:
                 "quantity": li.get("quantity"),
                 "price": li.get("price"),
                 "sku": li.get("sku"),
-                "variant_id": str(li.get("variant_id") or ""),
-                "product_id": str(li.get("product_id") or ""),
+                "variant_id": str(li["variant_id"]) if li.get("variant_id") else None,
+                "product_id": str(li["product_id"]) if li.get("product_id") else None,
             }
             for li in d.get("line_items", [])
         ],
@@ -245,9 +252,12 @@ async def search_products(
 
 @router.get("")
 async def list_orders(search: str = "", limit: int = Query(50, ge=1, le=250),
-                      status: str = "any", agent=Depends(get_current_agent)):
+                      status: str = "any", merchant_id: Optional[str] = Query(None),
+                      agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        data = await shopify_get("/orders.json", {"limit": limit, "status": status})
+        data = await shopify_get("/orders.json", {"limit": limit, "status": status},
+                                 store_domain=store_domain, access_token=access_token)
         orders = [_format_order(o) for o in data.get("orders", [])]
         if search:
             s = search.lower()
@@ -262,18 +272,44 @@ async def list_orders(search: str = "", limit: int = Query(50, ge=1, le=250),
 
 
 @router.get("/customer/{customer_id}")
-async def get_orders_by_customer(customer_id: str, agent=Depends(get_current_agent)):
+async def get_orders_by_customer(customer_id: str, merchant_id: Optional[str] = Query(None),
+                                  agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        data = await shopify_get(f"/customers/{customer_id}/orders.json", {"status": "any", "limit": 50})
+        data = await shopify_get(f"/customers/{customer_id}/orders.json", {"status": "any", "limit": 50},
+                                 store_domain=store_domain, access_token=access_token)
         return [_format_order(o) for o in data.get("orders", [])]
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
-@router.get("/{order_id}")
-async def get_order(order_id: str, agent=Depends(get_current_agent)):
+@router.get("/search")
+async def search_orders_by_number(
+    order_number: str = Query(..., description="Order number with or without # prefix (e.g. 1741 or #1741)"),
+    merchant_id: Optional[str] = Query(None),
+    agent=Depends(get_current_agent),
+):
+    """Fetch a specific Shopify order by order number using the name filter.
+    Uses Shopify's built-in name search — returns exact match, never returns 'most recent order'.
+    """
+    name = order_number if order_number.startswith('#') else f"#{order_number}"
+    store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        data = await shopify_get(f"/orders/{order_id}.json")
+        data = await shopify_get("/orders.json", {"name": name, "status": "any"},
+                                 store_domain=store_domain, access_token=access_token)
+        orders = [_format_order(o) for o in data.get("orders", [])]
+        return {"orders": orders, "total": len(orders)}
+    except ShopifyAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.get("/{order_id}")
+async def get_order(order_id: str, merchant_id: Optional[str] = Query(None),
+                    agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(merchant_id)
+    try:
+        data = await shopify_get(f"/orders/{order_id}.json",
+                                 store_domain=store_domain, access_token=access_token)
         return _format_order(data.get("order", {}))
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -302,19 +338,38 @@ async def create_order(data: OrderCreatePayload, agent=Depends(get_current_agent
     """Create draft then complete it into a confirmed order.
     financial_status='paid'    → payment_pending=false (order marked as paid immediately)
     financial_status='pending' → payment_pending=true  (order awaits payment)
+
+    Shopify needs a moment to finish calculating taxes after draft creation before it
+    can be completed — we retry with 1s / 2s / 4s delays to handle this gracefully.
     """
+    store_domain, access_token = await get_shopify_creds(data.merchant_id)
     payload = _build_draft_payload(data)
     try:
-        draft_result = await shopify_post("/draft_orders.json", payload)
+        draft_result = await shopify_post("/draft_orders.json", payload,
+                                         store_domain=store_domain, access_token=access_token)
         draft = draft_result.get("draft_order", {})
         payment_pending = (data.financial_status or "pending") != "paid"
-        complete = await shopify_put(
-            f"/draft_orders/{draft['id']}/complete.json",
-            {"payment_pending": payment_pending},
-        )
-        order_id = complete.get("draft_order", {}).get("order_id")
+
+        # Retry completing the draft — Shopify may not have finished tax calculation yet
+        complete = None
+        for attempt, delay in enumerate([1, 2, 4]):
+            await asyncio.sleep(delay)
+            try:
+                complete = await shopify_put(
+                    f"/draft_orders/{draft['id']}/complete.json",
+                    {"payment_pending": payment_pending},
+                    store_domain=store_domain, access_token=access_token,
+                )
+                break  # success
+            except ShopifyAPIError as e:
+                if "not finished calculating" in (e.message or "").lower() and attempt < 2:
+                    continue  # wait longer and retry
+                raise  # any other error or final attempt → propagate
+
+        order_id = complete.get("draft_order", {}).get("order_id") if complete else None
         if order_id:
-            return _format_order((await shopify_get(f"/orders/{order_id}.json")).get("order", {}))
+            return _format_order((await shopify_get(f"/orders/{order_id}.json",
+                                                    store_domain=store_domain, access_token=access_token)).get("order", {}))
         return {"status": "created", "draft_order_id": str(draft["id"])}
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -336,9 +391,11 @@ async def update_order(order_id: str, data: OrderUpdatePayload, agent=Depends(ge
 
 @router.post("/{order_id}/cancel")
 async def cancel_order(order_id: str, data: CancelPayload, agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(data.merchant_id)
     try:
         payload = {"reason": data.reason, "restock": data.restock, "email": data.email}
-        result = await shopify_post(f"/orders/{order_id}/cancel.json", payload)
+        result = await shopify_post(f"/orders/{order_id}/cancel.json", payload,
+                                    store_domain=store_domain, access_token=access_token)
         return _format_order(result.get("order", {}))
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -347,6 +404,8 @@ async def cancel_order(order_id: str, data: CancelPayload, agent=Depends(get_cur
 # ─── REFUND ───
 @router.post("/{order_id}/refund")
 async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(data.merchant_id)
+    creds = dict(store_domain=store_domain, access_token=access_token)
     try:
         refund_payload = {"refund": {"notify": data.notify}}
         if data.note:
@@ -357,7 +416,7 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
             # Shopify requires location_id when restocking
             has_restock = any(li.restock for li in data.line_items)
             if has_restock:
-                locations = await shopify_get("/locations.json")
+                locations = await shopify_get("/locations.json", **creds)
                 locs = locations.get("locations", [])
                 if locs:
                     location_id = locs[0]["id"]
@@ -380,7 +439,7 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
             # ── Custom-amount (partial) refund ────────────────────────────────
             # Do NOT rely on /calculate for this path — it returns nothing without line items.
             # Fetch the order's transactions directly and find the original payment.
-            txns_data = await shopify_get(f"/orders/{order_id}/transactions.json")
+            txns_data = await shopify_get(f"/orders/{order_id}/transactions.json", **creds)
             all_txns = txns_data.get("transactions", [])
             parent_id = None
             # Pass 1 — prefer sale / capture with success status (standard online payments)
@@ -411,7 +470,7 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
         else:
             # ── Line-item refund (full or partial by items) ───────────────────
             # Use /calculate to (1) validate and cap quantities, (2) get suggested transactions.
-            calc = await shopify_post(f"/orders/{order_id}/refunds/calculate.json", refund_payload)
+            calc = await shopify_post(f"/orders/{order_id}/refunds/calculate.json", refund_payload, **creds)
             calc_refund = calc.get("refund", {})
 
             # Replace our requested line-item quantities with Shopify's validated ones.
@@ -441,7 +500,7 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
                         t["kind"] = "refund"
                 refund_payload["refund"]["transactions"] = transactions
 
-        result = await shopify_post(f"/orders/{order_id}/refunds.json", refund_payload)
+        result = await shopify_post(f"/orders/{order_id}/refunds.json", refund_payload, **creds)
         return result.get("refund", {})
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -449,9 +508,12 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
 
 # ─── MARK AS PAID (transaction) ───
 @router.post("/{order_id}/mark-paid")
-async def mark_as_paid(order_id: str, agent=Depends(get_current_agent)):
+async def mark_as_paid(order_id: str, merchant_id: Optional[str] = Query(None),
+                       agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(merchant_id)
+    creds = dict(store_domain=store_domain, access_token=access_token)
     try:
-        order_data = await shopify_get(f"/orders/{order_id}.json")
+        order_data = await shopify_get(f"/orders/{order_id}.json", **creds)
         order = order_data.get("order", {})
 
         if order.get("financial_status") == "paid":
@@ -461,7 +523,7 @@ async def mark_as_paid(order_id: str, agent=Depends(get_current_agent)):
         currency = order.get("currency", "USD")
 
         # Check if there's an existing authorization to capture
-        txns = await shopify_get(f"/orders/{order_id}/transactions.json")
+        txns = await shopify_get(f"/orders/{order_id}/transactions.json", **creds)
         auth_txn = None
         for t in txns.get("transactions", []):
             if t.get("kind") == "authorization" and t.get("status") == "success":
@@ -481,7 +543,7 @@ async def mark_as_paid(order_id: str, agent=Depends(get_current_agent)):
                 "gateway": "manual",
             }}
 
-        result = await shopify_post(f"/orders/{order_id}/transactions.json", payload)
+        result = await shopify_post(f"/orders/{order_id}/transactions.json", payload, **creds)
         return result.get("transaction", {})
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -490,9 +552,11 @@ async def mark_as_paid(order_id: str, agent=Depends(get_current_agent)):
 # ─── FULFILLMENT ───
 @router.post("/{order_id}/fulfill")
 async def fulfill_order(order_id: str, data: FulfillPayload, agent=Depends(get_current_agent)):
+    store_domain, access_token = await get_shopify_creds(data.merchant_id)
+    creds = dict(store_domain=store_domain, access_token=access_token)
     try:
         # Get the fulfillment order IDs (required by newer Shopify API)
-        fo_data = await shopify_get(f"/orders/{order_id}/fulfillment_orders.json")
+        fo_data = await shopify_get(f"/orders/{order_id}/fulfillment_orders.json", **creds)
         fulfillment_orders = fo_data.get("fulfillment_orders", [])
 
         if not fulfillment_orders:
@@ -532,7 +596,7 @@ async def fulfill_order(order_id: str, data: FulfillPayload, agent=Depends(get_c
                 "company": data.tracking_company or "",
             }
 
-        result = await shopify_post("/fulfillments.json", payload)
+        result = await shopify_post("/fulfillments.json", payload, **creds)
         return result.get("fulfillment", {})
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

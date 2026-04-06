@@ -44,8 +44,8 @@ export const authApi = {
 export const shopifyApi = {
   syncOrders: (limit = 50) => api.post('/shopify/sync-orders', null, { params: { limit } }),
   listOrders: (limit = 50) => api.get('/shopify/orders', { params: { limit } }),
-  getInventory: (variantIds) => api.get('/shopify/inventory', { params: { variant_ids: variantIds.join(',') } }),
-  getProductVariants: (productId) => api.get(`/shopify/products/${productId}/variants`),
+  getInventory: (variantIds, merchantId = null) => api.get('/shopify/inventory', { params: { variant_ids: variantIds.join(','), ...(merchantId ? { merchant_id: merchantId } : {}) } }),
+  getProductVariants: (productId, merchantId = null) => api.get(`/shopify/products/${productId}/variants`, { params: merchantId ? { merchant_id: merchantId } : {} }),
 }
 
 export const aiApi = {
@@ -60,21 +60,22 @@ export const channelsApi = {
 }
 
 export const ordersApi = {
-  get: (id) => api.get(`/orders/${id}`),
+  get: (id, merchantId = null) => api.get(`/orders/${id}`, { params: merchantId ? { merchant_id: merchantId } : {} }),
   list: (params) => api.get('/orders', { params }),
-  listByCustomer: (customerId) => api.get(`/orders/customer/${customerId}`),
+  searchByNumber: (orderNumber, merchantId = null) => api.get('/orders/search', { params: { order_number: String(orderNumber).replace(/^#/, ''), ...(merchantId ? { merchant_id: merchantId } : {}) } }),
+  listByCustomer: (customerId, merchantId = null) => api.get(`/orders/customer/${customerId}`, { params: merchantId ? { merchant_id: merchantId } : {} }),
   create: (data) => api.post('/orders', data),
   cancel: (id, data) => api.post(`/orders/${id}/cancel`, data),
   refund: (id, data) => api.post(`/orders/${id}/refund`, data),
   update: (id, data) => api.patch(`/orders/${id}`, data),
   fulfill: (id, data) => api.post(`/orders/${id}/fulfill`, data),
-  markPaid: (id) => api.post(`/orders/${id}/mark-paid`),
+  markPaid: (id, merchantId = null) => api.post(`/orders/${id}/mark-paid`, null, { params: merchantId ? { merchant_id: merchantId } : {} }),
   searchProducts: (q = '', limit = 250, sinceId = '') => api.get('/orders/products/search', { params: { q, limit, ...(sinceId ? { since_id: sinceId } : {}) } }),
 }
 
 export const customersApi = {
-  search: (email, limit = 1) => api.get('/customers', { params: { search: email, limit } }),
-  get: (id) => api.get(`/customers/${id}`),
+  search: (email, limit = 1, merchantId = null) => api.get('/customers', { params: { search: email, limit, ...(merchantId ? { merchant_id: merchantId } : {}) } }),
+  get: (id, merchantId = null) => api.get(`/customers/${id}`, { params: merchantId ? { merchant_id: merchantId } : {} }),
   update: (id, data) => api.patch(`/customers/${id}`, data),
 }
 

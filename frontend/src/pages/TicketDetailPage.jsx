@@ -441,6 +441,22 @@ export default function TicketDetailPage() {
                   </a>
                 );
               })()}
+              {/* Attachment images (external URLs stored in attachments[]) */}
+              {m.attachments && m.attachments.length > 0 && (
+                <div className={`flex flex-wrap gap-2 ${m.body ? 'mt-2' : ''}`}>
+                  {m.attachments.map((url, idx) => (
+                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={url}
+                        alt={`Attachment ${idx + 1}`}
+                        loading="lazy"
+                        className="w-24 h-24 object-cover rounded-lg border border-gray-200 hover:opacity-90 transition-opacity"
+                        onError={e => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    </a>
+                  ))}
+                </div>
+              )}
               {m.whatsapp_status && m.sender_type === 'agent' && (
                 <span className="flex items-center gap-1 text-xs text-gray-400 mt-1">
                   {m.whatsapp_status === 'sent' && <><Check size={12} /> Sent</>}

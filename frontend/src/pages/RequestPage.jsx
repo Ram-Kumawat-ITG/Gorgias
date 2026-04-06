@@ -1,4 +1,4 @@
-import { useState, useEffect, Component, useRef } from 'react'
+import { useState, useEffect, Component, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { aiApi, ordersApi, customersApi, channelsApi, ticketsApi, shopifyApi } from '../api/client'
 import AiBanner from '../components/AiBanner'
@@ -193,6 +193,17 @@ export default function RequestPage() {
   // ── Inventory levels (fetched when shopifyOrder loads) ────────────────────
   const [inventory, setInventory] = useState([])
   const [inventoryLoading, setInventoryLoading] = useState(false)
+  const [inventoryError, setInventoryError] = useState(false)
+
+  // ── Order identification state ─────────────────────────────────────────────
+  // True when no order number could be identified from ticket data or messages
+  const [orderNotIdentified, setOrderNotIdentified] = useState(false)
+  // Mismatch warning when a found order doesn't belong to this customer
+  const [orderMismatchWarning, setOrderMismatchWarning] = useState(null)
+  // Last 5 customer orders for manual selection when order can't be identified
+  const [candidateOrders, setCandidateOrders] = useState([])
+  // Tracks which ticketId we've already attempted message-based extraction for
+  const orderExtractionAttemptedRef = useRef(null)
 
   // ── Pending action approve/reject ────────────────────────────────────────
   const [actionLoading, setActionLoading] = useState(false)
@@ -315,65 +326,171 @@ export default function RequestPage() {
     }
   }, [messages])
 
+  // ── Order number extraction from free text ──────────────────────────────
+  function extractOrderNumber(text) {
+    if (!text) return null
+    const patterns = [
+      // "Order #1741", "order no. 1741", "order number 1741", "order: 1741"
+      /order\s*(?:#|no\.?|number|:)\s*(\d{3,})/i,
+      // "ORD-1741", "#ORD-1741"
+      /(?:#?ORD[-\s]?)(\d{3,})/i,
+      // Standalone "#1741" (at least 3 digits, not part of a longer word)
+      /(?<![\/\d])#(\d{3,})(?!\d)/,
+    ]
+    for (const p of patterns) {
+      const m = text.match(p)
+      if (m?.[1]) return m[1]
+    }
+    return null
+  }
+
+  // ── Fetch order by number, verify customer ownership ─────────────────────
+  async function findAndVerifyOrderByNumber(orderNumber, customerEmail, merchantId = null) {
+    const numStr = String(orderNumber).replace(/^#/, '')
+    const res = await ordersApi.searchByNumber(numStr, merchantId)
+    const orders = res.data?.orders || []
+    if (!orders.length) return { order: null, warning: `Order #${numStr} not found in Shopify` }
+    const order = orders[0]
+    const orderEmail = (order.email || '').toLowerCase().trim()
+    const ticketEmail = (customerEmail || '').toLowerCase().trim()
+    if (orderEmail && ticketEmail && orderEmail !== ticketEmail) {
+      return { order, warning: `Order #${numStr} belongs to ${order.email} — does not match this ticket's customer (${customerEmail})` }
+    }
+    return { order, warning: null }
+  }
+
   // Fetch live Shopify order + customer when a ticket is opened
+  // Priority order:
+  //   1. selectedTicket.shopify_order_id  → direct GET /orders/{id}
+  //   2. selectedTicket.shopify_order_number → search by name
+  //   3. message-based extraction → separate effect below (needs messages to load first)
   useEffect(() => {
     if (!selectedTicket) {
       setShopifyOrder(null)
       setShopifyCustomer(null)
+      setOrderNotIdentified(false)
+      setOrderMismatchWarning(null)
+      setCandidateOrders([])
+      orderExtractionAttemptedRef.current = null
       return
     }
 
-    // ── Order: direct by shopify_order_id, else fall back via customer email ──
-    if (selectedTicket.shopify_order_id) {
+    async function loadOrderP1P2() {
       setShopifyOrderLoading(true)
-      ordersApi.get(selectedTicket.shopify_order_id)
-        .then(res => setShopifyOrder(res.data))
-        .catch(err => { console.warn('[shopifyOrder] direct fetch failed:', err); setShopifyOrder(null) })
-        .finally(() => setShopifyOrderLoading(false))
-    } else if (selectedTicket.customer_email) {
-      // No order ID on ticket — find most recent order via customer lookup
-      setShopifyOrderLoading(true)
-      customersApi.search(selectedTicket.customer_email, 1)
-        .then(async res => {
-          const customers = res.data?.customers || []
-          if (!customers.length || !customers[0].id) { setShopifyOrder(null); return }
-          const customerId = customers[0].id
-          const ordersRes = await ordersApi.listByCustomer(customerId)
-          const orders = ordersRes.data || []
-          setShopifyOrder(orders.length ? orders[0] : null)
-        })
-        .catch(err => { console.warn('[shopifyOrder] customer-email fallback failed:', err); setShopifyOrder(null) })
-        .finally(() => setShopifyOrderLoading(false))
-    } else {
-      setShopifyOrder(null)
+      setOrderNotIdentified(false)
+      setOrderMismatchWarning(null)
+      setCandidateOrders([])
+      try {
+        const mid = selectedTicket.merchant_id || null
+        // Priority 1 — ticket already has a direct Shopify order ID (Shopify-synced tickets)
+        if (selectedTicket.shopify_order_id) {
+          const res = await ordersApi.get(selectedTicket.shopify_order_id, mid)
+          setShopifyOrder(res.data)
+          return
+        }
+        // Priority 2 — ticket has order number stored (email/manual tickets after AI processing)
+        if (selectedTicket.shopify_order_number) {
+          const { order, warning } = await findAndVerifyOrderByNumber(
+            selectedTicket.shopify_order_number, selectedTicket.customer_email, mid
+          )
+          if (order) { setShopifyOrder(order); if (warning) setOrderMismatchWarning(warning); return }
+        }
+        // No order found in ticket metadata — message extraction happens in the next effect
+        setShopifyOrder(null)
+      } catch (err) {
+        console.warn('[shopifyOrder] P1/P2 fetch failed:', err)
+        setShopifyOrder(null)
+      } finally {
+        setShopifyOrderLoading(false)
+      }
     }
 
-    // ── Customer profile ──
+    loadOrderP1P2()
+
+    // ── Customer profile (independent of order) ────────────────────────────
     if (selectedTicket.customer_email) {
-      customersApi.search(selectedTicket.customer_email, 1)
-        .then(res => {
-          const list = res.data?.customers || []
-          setShopifyCustomer(list[0] || null)
-        })
+      customersApi.search(selectedTicket.customer_email, 1, selectedTicket.merchant_id || null)
+        .then(res => setShopifyCustomer((res.data?.customers || [])[0] || null))
         .catch(() => setShopifyCustomer(null))
     } else {
       setShopifyCustomer(null)
     }
   }, [selectedTicket])
 
-  // Fetch inventory levels when shopifyOrder loads
+  // Priority 3 & 4: once messages load, attempt order extraction from message text
+  // Guard: only runs once per ticket (ref tracks attempt), only if order still not resolved
   useEffect(() => {
-    if (!shopifyOrder?.line_items?.length) { setInventory([]); return }
-    const variantIds = shopifyOrder.line_items
-      .map(li => li.variant_id)
-      .filter(Boolean)
-      .map(String)
+    if (!selectedTicket || shopifyOrder || shopifyOrderLoading) return
+    if (!messages.length) return
+    if (orderExtractionAttemptedRef.current === selectedTicket.id) return
+    orderExtractionAttemptedRef.current = selectedTicket.id
+
+    async function loadOrderP3P4() {
+      setShopifyOrderLoading(true)
+      try {
+        // Priority 3 — extract order number from message text
+        const text = messages.map(m => m.message || m.body || '').join(' ')
+        const orderNumber = extractOrderNumber(text)
+
+        if (orderNumber) {
+          const { order, warning } = await findAndVerifyOrderByNumber(orderNumber, selectedTicket.customer_email, selectedTicket.merchant_id || null)
+          if (order) {
+            setShopifyOrder(order)
+            if (warning) setOrderMismatchWarning(warning)
+            return
+          }
+          // Extraction found a number but Shopify returned no match
+          console.warn(`[shopifyOrder] Order #${orderNumber} mentioned in message but not found in Shopify`)
+        }
+
+        // Priority 4 — no extractable order number → fetch recent orders as candidates for manual selection
+        if (selectedTicket.customer_email) {
+          try {
+            const cRes = await customersApi.search(selectedTicket.customer_email, 1, selectedTicket.merchant_id || null)
+            const customers = cRes.data?.customers || []
+            if (customers.length && customers[0].id) {
+              const ordersRes = await ordersApi.listByCustomer(customers[0].id, selectedTicket.merchant_id || null)
+              setCandidateOrders((ordersRes.data || []).slice(0, 5))
+            }
+          } catch { /* customer may not be in Shopify */ }
+        }
+        setOrderNotIdentified(true)
+      } catch (err) {
+        console.warn('[shopifyOrder] P3/P4 failed:', err)
+        setOrderNotIdentified(true)
+      } finally {
+        setShopifyOrderLoading(false)
+      }
+    }
+
+    loadOrderP3P4()
+  }, [selectedTicket, messages, shopifyOrder, shopifyOrderLoading])
+
+  // When an order with a valid customer_id is loaded, refresh customer data directly
+  // (search-by-email can return stale orders_count / total_spent from Shopify's cache)
+  useEffect(() => {
+    if (!shopifyOrder?.customer_id) return
+    customersApi.get(shopifyOrder.customer_id, selectedTicket?.merchant_id || null)
+      .then(res => { if (res.data?.customer) setShopifyCustomer(res.data.customer) })
+      .catch(() => {})
+  }, [shopifyOrder?.customer_id])
+
+  // Fetch inventory levels when shopifyOrder loads
+  const fetchInventory = useCallback((order) => {
+    const src = order || shopifyOrder
+    if (!src?.line_items?.length) { setInventory([]); return }
+    const variantIds = src.line_items.map(li => li.variant_id).filter(Boolean).map(String)
     if (!variantIds.length) { setInventory([]); return }
     setInventoryLoading(true)
-    shopifyApi.getInventory(variantIds)
-      .then(res => setInventory(res.data.inventory || []))
-      .catch(() => setInventory([]))
+    setInventoryError(false)
+    shopifyApi.getInventory(variantIds, selectedTicket?.merchant_id || null)
+      .then(res => { setInventory(res.data.inventory || []); setInventoryError(false) })
+      .catch(() => { setInventory([]); setInventoryError(true) })
       .finally(() => setInventoryLoading(false))
+  }, [shopifyOrder])
+
+  useEffect(() => {
+    fetchInventory(shopifyOrder)
   }, [shopifyOrder?.id])
 
   // Background poll every 30 s — only refreshes the list view
@@ -459,10 +576,11 @@ export default function RequestPage() {
       let successMsg = 'Action executed successfully.'
       let extraData = {}   // extra payload attached to the result (e.g. trackingData)
 
+      const mid = selectedTicket?.merchant_id || null
       if (action.type === 'CANCEL_ORDER') {
         const id = merged.shopify_order_id || merged.order_id || ticketOrderId
         if (!id) throw new Error('Order ID is required. It has been auto-filled if available — check the field above.')
-        await ordersApi.cancel(id, { reason: merged.reason || 'other', restock: true, email: false })
+        await ordersApi.cancel(id, { reason: merged.reason || 'other', restock: true, email: false, merchant_id: mid })
         successMsg = `Order #${merged.order_number || id} cancelled successfully.`
 
       } else if (action.type === 'REFUND_ORDER') {
@@ -472,13 +590,14 @@ export default function RequestPage() {
           custom_amount: merged.refund_amount || null,
           note: merged.reason || '',
           notify: true,
+          merchant_id: mid,
         })
         successMsg = `Refund of $${merged.refund_amount || '(full)'} issued for order #${merged.order_number || id}.`
 
       } else if (action.type === 'TRACK_ORDER') {
         const id = merged.shopify_order_id || merged.order_id || ticketOrderId
         if (!id) throw new Error('Order ID is required. It has been auto-filled if available — check the field above.')
-        const res = await ordersApi.get(id)
+        const res = await ordersApi.get(id, mid)
         const order = res.data
         const ff = order.fulfillments?.[0]
         if (ff?.tracking_number) {
@@ -510,7 +629,7 @@ export default function RequestPage() {
         const email = merged.customer_email || selectedTicket?.customer_email
         if (!email) throw new Error('Customer email is required')
         // Look up Shopify customer_id by email
-        const searchRes = await customersApi.search(email, 1)
+        const searchRes = await customersApi.search(email, 1, mid)
         const customers = searchRes.data?.customers || []
         if (!customers.length) throw new Error(`No Shopify customer found for: ${email}`)
         const customerId = customers[0].id
@@ -520,20 +639,20 @@ export default function RequestPage() {
           price: merged.price || '0.00',
           ...(merged.variant_id ? { variant_id: merged.variant_id } : {}),
         }
-        const order = await ordersApi.create({ customer_id: customerId, line_items: [lineItem] })
+        const order = await ordersApi.create({ customer_id: customerId, line_items: [lineItem], merchant_id: mid })
         successMsg = `Order created for ${email} — Order #${order.data?.order_number || ''}.`
 
       } else if (action.type === 'DELETE_ORDER') {
         const id = merged.order_id || ticketOrderId || merged.shopify_order_id
         if (!id) throw new Error('Order ID is required — enter the Shopify order ID above')
         // Shopify does not allow deleting confirmed orders — cancel instead
-        await ordersApi.cancel(id, { reason: 'other', restock: true, email: false })
+        await ordersApi.cancel(id, { reason: 'other', restock: true, email: false, merchant_id: mid })
         successMsg = `Order #${merged.order_number || id} cancelled and restocked.`
 
       } else if (action.type === 'UPDATE_CUSTOMER_ADDRESS' || action.type === 'UPDATE_CUSTOMER_DETAILS') {
         const email = merged.customer_email || selectedTicket?.customer_email
         if (!email) throw new Error('Customer email is required')
-        const searchRes = await customersApi.search(email)
+        const searchRes = await customersApi.search(email, 1, mid)
         const customers = searchRes.data?.customers
         if (!customers?.length) throw new Error(`No customer found with email: ${email}`)
         const customerId = customers[0].id
@@ -901,6 +1020,63 @@ export default function RequestPage() {
                 </div>
               )}
 
+              {/* ── Order mismatch warning ────────────────────────────────────── */}
+              {orderMismatchWarning && (
+                <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <svg className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-amber-800">Order customer mismatch</p>
+                    <p className="text-xs text-amber-700 mt-0.5">{orderMismatchWarning}</p>
+                  </div>
+                  <button onClick={() => setOrderMismatchWarning(null)} className="text-amber-400 hover:text-amber-600 shrink-0">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              )}
+
+              {/* ── Order not identified — manual selector ─────────────────── */}
+              {orderNotIdentified && !shopifyOrder && (
+                <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Could not identify order number from customer message</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {candidateOrders.length > 0
+                          ? 'Select the correct order below, or ask the customer for the order number.'
+                          : 'No orders found for this customer in Shopify.'}
+                      </p>
+                    </div>
+                  </div>
+                  {candidateOrders.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent orders</p>
+                      {candidateOrders.map(order => (
+                        <button
+                          key={order.id}
+                          onClick={() => { setShopifyOrder(order); setOrderNotIdentified(false); setCandidateOrders([]) }}
+                          className="w-full flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 text-left hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                        >
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{order.name || `#${order.order_number}`}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {order.created_at ? new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              {' · '}{order.financial_status}
+                              {order.total_price ? ` · ${order.currency === 'INR' ? '₹' : '$'}${order.total_price}` : ''}
+                            </p>
+                          </div>
+                          <span className="text-xs text-brand-600 font-medium shrink-0">Select →</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* ── AiBanner: 7-section unified analysis panel ── */}
               <AiBanner
                 aiResult={aiResult}
@@ -920,6 +1096,8 @@ export default function RequestPage() {
                 handleFieldChange={handleFieldChange}
                 inventory={inventory}
                 inventoryLoading={inventoryLoading}
+                inventoryError={inventoryError}
+                onRetryInventory={() => fetchInventory(shopifyOrder)}
                 sendPrompt={sendPrompt}
                 approveAction={approveAction}
                 onClear={() => { setAiResult(null); setActionResult({}); setActiveActionIndex(null) }}
@@ -1248,8 +1426,8 @@ export default function RequestPage() {
                               setSidebarActionError('')
                               setSidebarActionLoading('fulfill')
                               try {
-                                await ordersApi.fulfill(shopifyOrder.id, {})
-                                const res = await ordersApi.get(shopifyOrder.id)
+                                await ordersApi.fulfill(shopifyOrder.id, { merchant_id: selectedTicket?.merchant_id || null })
+                                const res = await ordersApi.get(shopifyOrder.id, selectedTicket?.merchant_id || null)
                                 setShopifyOrder(res.data)
                               } catch (e) {
                                 setSidebarActionError(e.response?.data?.detail || 'Fulfill failed')
@@ -1276,8 +1454,8 @@ export default function RequestPage() {
                               setSidebarActionError('')
                               setSidebarActionLoading('markPaid')
                               try {
-                                await ordersApi.markPaid(shopifyOrder.id)
-                                const res = await ordersApi.get(shopifyOrder.id)
+                                await ordersApi.markPaid(shopifyOrder.id, selectedTicket?.merchant_id || null)
+                                const res = await ordersApi.get(shopifyOrder.id, selectedTicket?.merchant_id || null)
                                 setShopifyOrder(res.data)
                               } catch (e) {
                                 setSidebarActionError(e.response?.data?.detail || 'Mark as paid failed')
@@ -1304,7 +1482,7 @@ export default function RequestPage() {
                             setSidebarActionLoading('refresh')
                             setSidebarActionError('')
                             try {
-                              const res = await ordersApi.get(shopifyOrder.id)
+                              const res = await ordersApi.get(shopifyOrder.id, selectedTicket?.merchant_id || null)
                               setShopifyOrder(res.data)
                             } catch {
                               setSidebarActionError('Could not refresh order')

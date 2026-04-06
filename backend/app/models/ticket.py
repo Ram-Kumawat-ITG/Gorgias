@@ -52,6 +52,10 @@ class TicketCreate(BaseModel):
     priority: TicketPriority = TicketPriority.NORMAL
     tags: List[str] = []
     initial_message: Optional[str] = None
+    # `message` is the preferred alias for initial_message; both are accepted
+    message: Optional[str] = None
+    # Image URLs attached to the initial message (hosted externally, no upload)
+    images: List[str] = []
 
 
 class TicketUpdate(BaseModel):
