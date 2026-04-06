@@ -164,6 +164,67 @@ async def sync_orders(
     }
 
 
+@router.get("/inventory")
+async def get_inventory_levels(
+    variant_ids: str = Query(..., description="Comma-separated Shopify variant IDs"),
+    agent=Depends(get_current_agent),
+):
+    """Fetch inventory quantities for Shopify product variants."""
+    ids = [v.strip() for v in variant_ids.split(",") if v.strip()]
+    if not ids:
+        return {"inventory": []}
+    try:
+        data = await shopify_get(
+            "/variants.json",
+            {"ids": ",".join(ids), "fields": "id,title,sku,inventory_quantity,inventory_management,inventory_policy"},
+        )
+        variants = data.get("variants", [])
+        return {
+            "inventory": [
+                {
+                    "variant_id": str(v["id"]),
+                    "title": v.get("title") or "",
+                    "sku": v.get("sku") or "",
+                    "inventory_quantity": v.get("inventory_quantity", 0),
+                    "inventory_management": v.get("inventory_management") or "",
+                    "inventory_policy": v.get("inventory_policy") or "deny",
+                }
+                for v in variants
+            ]
+        }
+    except Exception as e:
+        return {"inventory": [], "error": str(e)}
+
+
+@router.get("/products/{product_id}/variants")
+async def get_product_variants(
+    product_id: str,
+    agent=Depends(get_current_agent),
+):
+    """Fetch all variants for a Shopify product with inventory levels."""
+    try:
+        data = await shopify_get(f"/products/{product_id}.json", {"fields": "id,title,variants"})
+        product = data.get("product", {})
+        variants = product.get("variants", [])
+        return {
+            "product_title": product.get("title", ""),
+            "variants": [
+                {
+                    "id": str(v["id"]),
+                    "title": v.get("title", ""),
+                    "sku": v.get("sku", ""),
+                    "price": v.get("price", "0.00"),
+                    "inventory_quantity": v.get("inventory_quantity", 0),
+                    "inventory_management": v.get("inventory_management") or "",
+                    "available": (v.get("inventory_quantity", 0) or 0) > 0,
+                }
+                for v in variants
+            ],
+        }
+    except Exception as e:
+        return {"product_title": "", "variants": [], "error": str(e)}
+
+
 @router.get("/orders")
 async def list_shopify_orders(
     limit: int = Query(50, ge=1, le=100),

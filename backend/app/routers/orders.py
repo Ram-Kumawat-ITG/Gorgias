@@ -352,9 +352,9 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
         if data.note:
             refund_payload["refund"]["note"] = data.note
 
+        location_id = None
         if data.line_items:
             # Shopify requires location_id when restocking
-            location_id = None
             has_restock = any(li.restock for li in data.line_items)
             if has_restock:
                 locations = await shopify_get("/locations.json")
@@ -362,6 +362,7 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
                 if locs:
                     location_id = locs[0]["id"]
 
+            # Send client-requested quantities to calculate — Shopify will validate/cap them
             refund_payload["refund"]["refund_line_items"] = [
                 {
                     "line_item_id": int(li.line_item_id),
@@ -375,35 +376,70 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
         if data.shipping_full_refund:
             refund_payload["refund"]["shipping"] = {"full_refund": True}
 
-        # Calculate refund to get transactions
-        calc = await shopify_post(f"/orders/{order_id}/refunds/calculate.json", refund_payload)
-        transactions = calc.get("refund", {}).get("transactions", [])
-        if transactions:
-            # Fix: Shopify returns kind "suggested_refund" — must change to "refund"
-            for t in transactions:
-                if t.get("kind") == "suggested_refund":
-                    t["kind"] = "refund"
-            refund_payload["refund"]["transactions"] = transactions
-
         if data.custom_amount:
-            # Find a valid parent transaction for the custom refund
-            if transactions and transactions[0].get("parent_id"):
-                parent_id = transactions[0]["parent_id"]
-            else:
-                # Look up paid transactions on the order
-                txns = await shopify_get(f"/orders/{order_id}/transactions.json")
-                parent_id = None
-                for t in txns.get("transactions", []):
-                    if t.get("kind") in ("sale", "capture") and t.get("status") == "success":
+            # ── Custom-amount (partial) refund ────────────────────────────────
+            # Do NOT rely on /calculate for this path — it returns nothing without line items.
+            # Fetch the order's transactions directly and find the original payment.
+            txns_data = await shopify_get(f"/orders/{order_id}/transactions.json")
+            all_txns = txns_data.get("transactions", [])
+            parent_id = None
+            # Pass 1 — prefer sale / capture with success status (standard online payments)
+            for t in all_txns:
+                if t.get("kind") in ("sale", "capture") and t.get("status") == "success":
+                    parent_id = t["id"]
+                    break
+            # Pass 2 — authorization with success (pre-auth then captured orders)
+            if not parent_id:
+                for t in all_txns:
+                    if t.get("kind") == "authorization" and t.get("status") == "success":
                         parent_id = t["id"]
                         break
-                if not parent_id:
-                    raise HTTPException(status_code=400, detail="No paid transaction found to refund against")
-
+            # Pass 3 — any non-refund, non-void transaction that succeeded or is pending
+            if not parent_id:
+                for t in all_txns:
+                    if t.get("kind") not in ("refund", "void") and t.get("status") in ("success", "pending"):
+                        parent_id = t["id"]
+                        break
+            if not parent_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No paid transaction found to refund against. Check that the order has a completed payment transaction.",
+                )
             refund_payload["refund"]["transactions"] = [
-                {"parent_id": parent_id, "amount": data.custom_amount,
-                 "kind": "refund", "gateway": "manual"}
+                {"parent_id": parent_id, "amount": data.custom_amount, "kind": "refund", "gateway": "manual"}
             ]
+        else:
+            # ── Line-item refund (full or partial by items) ───────────────────
+            # Use /calculate to (1) validate and cap quantities, (2) get suggested transactions.
+            calc = await shopify_post(f"/orders/{order_id}/refunds/calculate.json", refund_payload)
+            calc_refund = calc.get("refund", {})
+
+            # Replace our requested line-item quantities with Shopify's validated ones.
+            # This prevents "cannot refund more items than were purchased" when quantities
+            # exceed what is still refundable (e.g. prior partial refunds).
+            calc_line_items = calc_refund.get("refund_line_items", [])
+            if calc_line_items and data.line_items:
+                restock_map = {str(int(li.line_item_id)): li.restock for li in data.line_items}
+                validated = [
+                    {
+                        "line_item_id": item["line_item_id"],
+                        "quantity": item["quantity"],
+                        "restock_type": "return" if restock_map.get(str(item["line_item_id"]), False) else "no_restock",
+                        **({"location_id": location_id} if restock_map.get(str(item["line_item_id"]), False) and location_id else {}),
+                    }
+                    for item in calc_line_items
+                    if item.get("quantity", 0) > 0
+                ]
+                if validated:
+                    refund_payload["refund"]["refund_line_items"] = validated
+
+            # Use Shopify's suggested transactions (change kind to "refund")
+            transactions = calc_refund.get("transactions", [])
+            if transactions:
+                for t in transactions:
+                    if t.get("kind") == "suggested_refund":
+                        t["kind"] = "refund"
+                refund_payload["refund"]["transactions"] = transactions
 
         result = await shopify_post(f"/orders/{order_id}/refunds.json", refund_payload)
         return result.get("refund", {})

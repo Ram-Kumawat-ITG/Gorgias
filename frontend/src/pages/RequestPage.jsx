@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback, Component } from 'react'
+import { useState, useEffect, Component, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { aiApi, ordersApi, customersApi, channelsApi, ticketsApi } from '../api/client'
+import { aiApi, ordersApi, customersApi, channelsApi, ticketsApi, shopifyApi } from '../api/client'
+import AiBanner from '../components/AiBanner'
 import clsx from 'clsx'
 
 // ── Error Boundary — prevents blank page on any render-time throw ─────────────
@@ -15,7 +16,7 @@ class ErrorBoundary extends Component {
   componentDidCatch(error, info) {
     console.error('[RequestPage] Render error:', error, info)
   }
-  render() {
+  render() {  
     if (this.state.hasError) {
       return (
         <div className="p-8 rounded-xl bg-red-50 border border-red-200 text-center space-y-3">
@@ -144,174 +145,6 @@ const MSG_COLORS = {
 }
 
 
-// ── Product selector dropdown — used in CREATE_ORDER action fields ────────────
-function ProductSelectorInput({ value, onTextChange, onSelect }) {
-  const [query, setQuery] = useState(value || '')
-  const [results, setResults] = useState([])
-  const [searchLoading, setSearchLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [hasMore, setHasMore] = useState(false)
-  const [lastProductId, setLastProductId] = useState(null)
-  const [open, setOpen] = useState(false)
-
-  const searchRef = useRef(null)
-  const dropdownRef = useRef(null)
-
-  async function fetchProducts(q = '', sinceId = '') {
-    if (sinceId) setLoadingMore(true)
-    else setSearchLoading(true)
-    try {
-      const res = await ordersApi.searchProducts(q, 250, sinceId)
-      const data = res.data
-      if (sinceId) {
-        setResults(prev => [...prev, ...(data.products || [])])
-      } else {
-        setResults(data.products || [])
-      }
-      setHasMore(data.has_more || false)
-      setLastProductId(data.last_product_id || null)
-      setOpen(true)
-    } catch {
-      if (!sinceId) setResults([])
-    } finally {
-      setSearchLoading(false)
-      setLoadingMore(false)
-    }
-  }
-
-  // Load all products on mount
-  useEffect(() => { fetchProducts('') }, [])
-
-  // Sync external value (AI pre-fill)
-  useEffect(() => { setQuery(value || '') }, [value])
-
-  // Debounced search — resets pagination each time
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setLastProductId(null)
-      fetchProducts(query)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [query])
-
-  // Close on outside click (ref-based, same as CreateOrderModal)
-  useEffect(() => {
-    function handle(e) {
-      if (searchRef.current && !searchRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [])
-
-  // Infinite scroll in dropdown
-  const handleDropdownScroll = useCallback(() => {
-    const el = dropdownRef.current
-    if (!el || loadingMore || !hasMore) return
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
-      fetchProducts(query, lastProductId)
-    }
-  }, [loadingMore, hasMore, lastProductId, query])
-
-  return (
-    <div className="relative flex-1" ref={searchRef}>
-      {/* Search input */}
-      <div className="relative">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
-        </svg>
-        <input
-          type="text"
-          value={query}
-          onChange={e => { setQuery(e.target.value); onTextChange(e.target.value) }}
-          onFocus={() => setOpen(true)}
-          placeholder="Search products to add..."
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        {searchLoading && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
-        )}
-      </div>
-
-      {/* Dropdown */}
-      {open && (
-        <div
-          ref={dropdownRef}
-          onScroll={handleDropdownScroll}
-          className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-72 overflow-y-auto"
-        >
-          {searchLoading && results.length === 0 ? (
-            <div className="flex items-center justify-center py-4">
-              <div className="w-5 h-5 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
-            </div>
-          ) : results.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-gray-400">No products found</p>
-          ) : (
-            <>
-              {results.map(p => (
-                <button
-                  key={p.variant_id}
-                  type="button"
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => {
-                    setQuery(p.title)
-                    onTextChange(p.title)
-                    onSelect(p)
-                    setOpen(false)
-                  }}
-                  className="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 border-b border-gray-50 last:border-0 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded bg-gray-100 shrink-0 overflow-hidden">
-                    {p.image
-                      ? <img src={p.image} alt="" className="w-full h-full object-cover" />
-                      : <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs">N/A</div>
-                    }
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{p.title}</p>
-                    <p className="text-xs text-gray-500">
-                      ${p.price}
-                      <span className="mx-1">·</span>
-                      <span className={p.inventory_quantity > 0 ? 'text-green-600' : 'text-red-500'}>
-                        {p.inventory_quantity > 0 ? `${p.inventory_quantity} in stock` : 'Out of stock'}
-                      </span>
-                      {p.sku && <span className="ml-1 text-gray-400">· {p.sku}</span>}
-                    </p>
-                  </div>
-                </button>
-              ))}
-              {loadingMore && (
-                <p className="px-4 py-2 text-xs text-gray-400 text-center">Loading more...</p>
-              )}
-              {hasMore && !loadingMore && (
-                <p className="px-4 py-2 text-xs text-gray-300 text-center">Scroll for more</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const ACTION_ICONS = {
-  CANCEL_ORDER: '🚫',
-  CREATE_ORDER: '🛒',
-  UPDATE_ORDER: '✏️',
-  DELETE_ORDER: '🗑️',
-  UPDATE_CUSTOMER_ADDRESS: '📍',
-  TRACK_ORDER: '📦',
-  REFUND_ORDER: '💰',
-  UPDATE_CUSTOMER_DETAILS: '👤',
-  // legacy lowercase keys (backward compat)
-  cancel_order: '🚫',
-  create_order: '🛒',
-  update_order: '✏️',
-  delete_order: '🗑️',
-  change_address: '📍',
-  track_order: '📦',
-  refund_order: '💰',
-  contact_support: '📞',
-}
 
 export default function RequestPage() {
   const [searchParams] = useSearchParams()
@@ -356,6 +189,10 @@ export default function RequestPage() {
   const [editableData, setEditableData] = useState({})
   const [activeActionIndex, setActiveActionIndex] = useState(null)
   const [actionResult, setActionResult] = useState({})
+
+  // ── Inventory levels (fetched when shopifyOrder loads) ────────────────────
+  const [inventory, setInventory] = useState([])
+  const [inventoryLoading, setInventoryLoading] = useState(false)
 
   // ── Pending action approve/reject ────────────────────────────────────────
   const [actionLoading, setActionLoading] = useState(false)
@@ -523,6 +360,21 @@ export default function RequestPage() {
       setShopifyCustomer(null)
     }
   }, [selectedTicket])
+
+  // Fetch inventory levels when shopifyOrder loads
+  useEffect(() => {
+    if (!shopifyOrder?.line_items?.length) { setInventory([]); return }
+    const variantIds = shopifyOrder.line_items
+      .map(li => li.variant_id)
+      .filter(Boolean)
+      .map(String)
+    if (!variantIds.length) { setInventory([]); return }
+    setInventoryLoading(true)
+    shopifyApi.getInventory(variantIds)
+      .then(res => setInventory(res.data.inventory || []))
+      .catch(() => setInventory([]))
+      .finally(() => setInventoryLoading(false))
+  }, [shopifyOrder?.id])
 
   // Background poll every 30 s — only refreshes the list view
   useEffect(() => {
@@ -755,6 +607,31 @@ export default function RequestPage() {
         customer_email: selectedTicket.customer_email,
         shopify_order_id: selectedTicket.shopify_order_id || shopifyOrder?.id || null,
         messages: messages.map((m) => ({ sender: m.sender, message: m.message })),
+      })
+      setAiResult(res.data)
+    } catch (err) {
+      setAiError(err.response?.data?.detail || err.message || 'AI analysis failed')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  // Analyze with a custom prompt injected as an agent message — used by quick action buttons
+  async function sendPrompt(promptText) {
+    if (!selectedTicket) return
+    setAiLoading(true)
+    setAiError('')
+    setAiResult(null)
+    setAiProcessResult(null)
+    try {
+      const res = await aiApi.analyze({
+        subject: selectedTicket.subject,
+        customer_email: selectedTicket.customer_email,
+        shopify_order_id: selectedTicket.shopify_order_id || shopifyOrder?.id || null,
+        messages: [
+          ...messages.map((m) => ({ sender: m.sender, message: m.message })),
+          { sender: 'agent', message: promptText },
+        ],
       })
       setAiResult(res.data)
     } catch (err) {
@@ -1024,357 +901,30 @@ export default function RequestPage() {
                 </div>
               )}
 
-              {/* AI Agent status bar */}
-              <div className="mb-4">
-                {selectedTicket.channel === 'whatsapp' ? (
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 text-xs font-medium">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                      </span>
-                      AI Agent — Fully Autonomous
-                    </div>
-                    {aiLoading ? (
-                      <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                        <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Processing &amp; sending reply…
-                      </div>
-                    ) : (
-                      <button
-                        onClick={handleProcessTicket}
-                        disabled={aiLoading}
-                        className="text-xs text-gray-400 hover:text-gray-600 underline"
-                      >
-                        Run again
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={aiLoading}
-                    className="btn-primary flex items-center gap-2"
-                  >
-                    {aiLoading ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                        </svg>
-                        Analyze with AI
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+              {/* ── AiBanner: 7-section unified analysis panel ── */}
+              <AiBanner
+                aiResult={aiResult}
+                aiLoading={aiLoading}
+                aiError={aiError}
+                aiProcessResult={aiProcessResult}
+                selectedTicket={selectedTicket}
+                shopifyOrder={shopifyOrder}
+                shopifyCustomer={shopifyCustomer}
+                actionResult={actionResult}
+                activeActionIndex={activeActionIndex}
+                setActiveActionIndex={setActiveActionIndex}
+                executeAction={executeAction}
+                handleAnalyze={handleAnalyze}
+                handleProcessTicket={handleProcessTicket}
+                getFieldValue={getFieldValue}
+                handleFieldChange={handleFieldChange}
+                inventory={inventory}
+                inventoryLoading={inventoryLoading}
+                sendPrompt={sendPrompt}
+                approveAction={approveAction}
+                onClear={() => { setAiResult(null); setActionResult({}); setActiveActionIndex(null) }}
+              />
 
-              {/* WhatsApp autonomous process result card */}
-              {aiProcessResult && aiProcessResult.status === 'success' && (
-                <div className={`mb-4 rounded-xl border px-4 py-3 space-y-2 ${
-                  aiProcessResult.reply_sent
-                    ? 'border-green-200 bg-green-50'
-                    : 'border-orange-200 bg-orange-50'
-                }`}>
-                  <div className="flex items-center gap-2">
-                    {aiProcessResult.reply_sent ? (
-                      <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    )}
-                    <span className={`text-xs font-semibold ${aiProcessResult.reply_sent ? 'text-green-800' : 'text-orange-800'}`}>
-                      {aiProcessResult.reply_sent
-                        ? 'AI replied to customer via WhatsApp ✓'
-                        : 'AI reply generated — WhatsApp delivery failed'}
-                    </span>
-                  </div>
-
-                  {/* Show send error prominently */}
-                  {aiProcessResult.send_error && (
-                    <div className="bg-orange-100 border border-orange-200 rounded-lg px-3 py-2">
-                      <p className="text-xs font-medium text-orange-700 mb-0.5">Meta API error:</p>
-                      <p className="text-xs text-orange-800 font-mono break-all">{aiProcessResult.send_error}</p>
-                    </div>
-                  )}
-
-                  <div className="bg-white border border-gray-100 rounded-lg px-3 py-2">
-                    <p className="text-xs text-gray-500 mb-1">
-                      {aiProcessResult.reply_sent ? 'Message sent to customer:' : 'Generated reply (not delivered):'}
-                    </p>
-                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{aiProcessResult.ai_reply}</p>
-                  </div>
-                  <button
-                    onClick={handleProcessTicket}
-                    disabled={aiLoading}
-                    className="text-xs text-gray-500 hover:text-gray-700 underline"
-                  >
-                    Run agent again
-                  </button>
-                </div>
-              )}
-
-              {/* AI Error */}
-              {aiError && (
-                <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 flex items-start gap-3">
-                  <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-red-700">AI analysis failed</p>
-                    <p className="text-xs text-red-600 mt-0.5">{aiError}</p>
-                  </div>
-                  <button onClick={handleAnalyze} className="text-xs text-red-600 hover:text-red-800 font-medium underline shrink-0">
-                    Retry
-                  </button>
-                </div>
-              )}
-
-              {/* AI Analysis Result */}
-              {aiResult && (
-                <div className="card border-2 border-purple-200 bg-purple-50/30 p-5 mb-6 space-y-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                      <h3 className="text-sm font-semibold text-purple-900">AI Analysis</h3>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => { setAiResult(null); setActionResult({}); setActiveActionIndex(null) }}
-                        className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        onClick={() => { setSelectedId(null); setSelectedTicket(null) }}
-                        className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 font-medium transition-colors"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                        Back to Requests
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Summary */}
-                  <div>
-                    <p className="text-sm text-gray-800">{aiResult.summary}</p>
-                  </div>
-
-                  {/* Intent row */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-gray-500">Intent:</span>
-                    <span className="badge bg-purple-100 text-purple-700 text-xs">{aiResult.intent?.primary || aiResult.intent}</span>
-                  </div>
-
-                  {/* Suggested Actions */}
-                  {aiResult.actions?.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-gray-600 mb-2">Suggested Actions</p>
-
-                      {/* Button row */}
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        {aiResult.actions.map((action, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setActiveActionIndex(activeActionIndex === i ? null : i)}
-                            className={clsx(
-                              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors',
-                              activeActionIndex === i
-                                ? 'border-purple-400 bg-purple-50 text-purple-700'
-                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                            )}
-                          >
-                            <span className="text-base leading-none">{ACTION_ICONS[action.type] || '⚡'}</span>
-                            {action.label}
-                            <span className={clsx(
-                              'ml-1 text-xs px-1 rounded',
-                              action.confidence >= 0.8 ? 'bg-green-100 text-green-700' :
-                                action.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-700' :
-                                  'bg-gray-100 text-gray-500'
-                            )}>
-                              {Math.round(action.confidence * 100)}%
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Expanded confirmation panel for the active action */}
-                      {activeActionIndex !== null && aiResult.actions[activeActionIndex] && (() => {
-                        const action = aiResult.actions[activeActionIndex]
-                        const i = activeActionIndex
-                        const result = actionResult[i]
-                        return (
-                          <div className="bg-white border border-purple-200 rounded-lg p-4 space-y-3">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">{action.label}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">{action.description}</p>
-                              </div>
-                              <button
-                                onClick={() => setActiveActionIndex(null)}
-                                className="text-gray-400 hover:text-gray-600 ml-3 shrink-0"
-                              >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            {/* Editable extracted_data fields */}
-                            {action.extracted_data && Object.keys(action.extracted_data).length > 0 && (
-                              <div className="space-y-2 border-t border-gray-100 pt-3">
-                                <p className="text-xs text-gray-400">Fill or confirm the details below before executing</p>
-                                {Object.entries(action.extracted_data).map(([field, aiValue]) => {
-                                  const isProductField = action.type === 'CREATE_ORDER' && field === 'product_name'
-                                  return (
-                                    <div key={field} className={isProductField ? 'space-y-1' : 'flex items-center gap-3'}>
-                                      <label className="text-xs text-gray-500 w-40 shrink-0 capitalize">
-                                        {field.replace(/_/g, ' ')}
-                                      </label>
-                                      {isProductField ? (
-                                        <ProductSelectorInput
-                                          value={getFieldValue(i, field, aiValue)}
-                                          onTextChange={val => handleFieldChange(i, field, val)}
-                                          onSelect={product => {
-                                            handleFieldChange(i, 'product_name', product.title)
-                                            handleFieldChange(i, 'price', product.price)
-                                            handleFieldChange(i, 'variant_id', product.variant_id)
-                                          }}
-                                        />
-                                      ) : (
-                                        <>
-                                          <input
-                                            type="text"
-                                            value={getFieldValue(i, field, aiValue)}
-                                            onChange={e => handleFieldChange(i, field, e.target.value)}
-                                            placeholder={aiValue == null ? 'not found — enter manually' : ''}
-                                            className="flex-1 text-xs border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-400 bg-gray-50 placeholder-gray-300"
-                                          />
-                                          
-                                        </>
-
-                                      )}
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            )}
-
-                            {/* ── Result feedback ── */}
-
-                            {/* Tracking card — rich UI for TRACK_ORDER */}
-                            {result?.trackingData && (
-                              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 space-y-3">
-                                <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
-                                  </svg>
-                                  Shipment Tracking
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                                  <span className="text-gray-500">Order</span>
-                                  <span className="font-medium text-gray-800">{result.trackingData.orderName}</span>
-                                  <span className="text-gray-500">Carrier</span>
-                                  <span className="font-medium text-gray-800">{result.trackingData.company || '—'}</span>
-                                  <span className="text-gray-500">Tracking #</span>
-                                  <span className="font-mono font-medium text-gray-800">{result.trackingData.number}</span>
-                                  {result.trackingData.status && (
-                                    <>
-                                      <span className="text-gray-500">Status</span>
-                                      <span className="font-medium capitalize text-gray-800">{result.trackingData.status}</span>
-                                    </>
-                                  )}
-                                </div>
-                                {result.trackingData.url ? (
-                                  <a
-                                    href={result.trackingData.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
-                                  >
-                                    Track Shipment
-                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                                    </svg>
-                                  </a>
-                                ) : (
-                                  <p className="text-xs text-blue-500">No tracking URL available for this shipment.</p>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Generic success */}
-                            {result?.success && !result.trackingData && (
-                              <div className="flex items-start gap-2.5 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
-                                <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span>{result.success}</span>
-                              </div>
-                            )}
-
-                            {/* Error with retry */}
-                            {result?.error && (
-                              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-3 space-y-2">
-                                <div className="flex items-start gap-2 text-xs text-red-700">
-                                  <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                  </svg>
-                                  <span className="flex-1">{result.error}</span>
-                                </div>
-                                <button
-                                  onClick={() => executeAction(action, i)}
-                                  className="text-xs text-red-600 hover:text-red-800 font-medium underline"
-                                >
-                                  Retry
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Execute button — hidden after success (except tracking where we keep the card) */}
-                            {!result?.success && (
-                              <button
-                                onClick={() => executeAction(action, i)}
-                                disabled={result?.loading}
-                                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium disabled:opacity-60 transition-colors"
-                              >
-                                {result?.loading ? (
-                                  <>
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                    Executing…
-                                  </>
-                                ) : (
-                                  <>
-                                    <span className="text-base leading-none">{ACTION_ICONS[action.type] || '⚡'}</span>
-                                    Execute: {action.label}
-                                  </>
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Right — ticket info sidebar */}

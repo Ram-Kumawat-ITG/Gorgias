@@ -44,6 +44,8 @@ export const authApi = {
 export const shopifyApi = {
   syncOrders: (limit = 50) => api.post('/shopify/sync-orders', null, { params: { limit } }),
   listOrders: (limit = 50) => api.get('/shopify/orders', { params: { limit } }),
+  getInventory: (variantIds) => api.get('/shopify/inventory', { params: { variant_ids: variantIds.join(',') } }),
+  getProductVariants: (productId) => api.get(`/shopify/products/${productId}/variants`),
 }
 
 export const aiApi = {
