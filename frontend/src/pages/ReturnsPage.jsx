@@ -34,17 +34,28 @@ export default function ReturnsPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
+  // Tickets with ticket_type=return that have no formal return record yet
+  const [returnTickets, setReturnTickets] = useState([]);
   const limit = 20;
 
   async function loadReturns() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get("/returns", {
-        params: { status, resolution, page, limit },
-      });
-      setReturns(res.data.returns ?? []);
-      setTotal(res.data.total ?? 0);
+      const [returnsRes, ticketsRes] = await Promise.all([
+        api.get("/returns", { params: { status, resolution, page, limit } }),
+        // Only fetch return tickets when showing all statuses (no filter applied)
+        (!status && !resolution)
+          ? api.get("/tickets", { params: { ticket_type: "return", status: "open,pending", limit: 50 } })
+          : Promise.resolve(null),
+      ]);
+      setReturns(returnsRes.data.returns ?? []);
+      setTotal(returnsRes.data.total ?? 0);
+      if (ticketsRes) {
+        setReturnTickets(ticketsRes.data.tickets ?? []);
+      } else {
+        setReturnTickets([]);
+      }
     } catch (err) {
       setError(err?.response?.data?.detail || 'Failed to load return requests');
     } finally {
@@ -134,6 +145,31 @@ export default function ReturnsPage() {
           <option value="replacement">Replacement</option>
         </select>
       </div>
+
+      {/* Incoming return tickets — open tickets with ticket_type=return, no formal return created yet */}
+      {!status && !resolution && returnTickets.length > 0 && (
+        <div className="mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-2">
+            Incoming Return Requests <span className="ml-1 px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 text-xs">{returnTickets.length}</span>
+          </h2>
+          <div className="card divide-y divide-gray-50">
+            {returnTickets.map(t => (
+              <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)}
+                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-900 truncate">{t.subject}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{t.customer_email}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="badge bg-yellow-100 text-yellow-700">needs review</span>
+                  <span className="text-xs text-gray-400">{t.created_at ? new Date(t.created_at).toLocaleDateString() : ''}</span>
+                  <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-500" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Returns list */}
       <div className="card divide-y divide-gray-50">

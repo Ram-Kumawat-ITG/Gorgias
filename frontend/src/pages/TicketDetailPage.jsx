@@ -238,13 +238,23 @@ export default function TicketDetailPage() {
             <p className="text-xs font-semibold text-gray-500 mb-1.5">📎 Attachments ({ticket.images.length})</p>
             <div className="flex flex-wrap gap-2">
               {ticket.images.map((url, idx) => (
-                <img
-                  key={idx}
-                  src={url}
-                  alt={`Attachment ${idx + 1}`}
-                  className="w-24 h-24 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => window.open(url, '_blank')}
-                />
+                <a key={idx} href={url} target="_blank" rel="noopener noreferrer"
+                   className="block w-24 h-24 rounded-lg border border-gray-200 overflow-hidden hover:opacity-90 transition-opacity flex-shrink-0">
+                  <img
+                    src={url}
+                    alt={`Attachment ${idx + 1}`}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                    onError={e => {
+                      e.currentTarget.style.display = 'none';
+                      e.currentTarget.parentElement.innerHTML =
+                        `<div class="w-full h-full flex flex-col items-center justify-center bg-gray-100 gap-1 p-1">` +
+                        `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>` +
+                        `<span class="text-xs text-gray-400 text-center leading-tight">View image</span>` +
+                        `</div>`;
+                    }}
+                  />
+                </a>
               ))}
             </div>
           </div>

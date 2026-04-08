@@ -122,9 +122,16 @@ async def process_ticket(ticket_id: str, agent=Depends(get_current_agent)):
             )
 
         # Always save the AI reply to the ticket thread (even if send failed)
+        # Ensure the AI reply is a plain string before saving. Some agents
+        # return structured objects like {'reply': 'text', ...}.
+        if isinstance(ai_reply, dict):
+            body_text = ai_reply.get("reply") or ai_reply.get("message") or str(ai_reply)
+        else:
+            body_text = str(ai_reply)
+
         reply_msg = MessageInDB(
             ticket_id=ticket_id,
-            body=ai_reply,
+            body=body_text,
             sender_type="agent",
             sender_id=agent["id"],
             channel="whatsapp",
@@ -155,7 +162,7 @@ async def process_ticket(ticket_id: str, agent=Depends(get_current_agent)):
             "status": "success",
             "reply_sent": wa_status == "sent",
             "whatsapp_status": wa_status,
-            "ai_reply": ai_reply,
+            "ai_reply": body_text,
             "message_id": reply_msg.id,
             "send_error": send_error,  # None when sent OK, error string when failed
         }

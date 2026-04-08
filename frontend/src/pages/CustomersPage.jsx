@@ -101,70 +101,57 @@ export default function CustomersPage() {
         />
       </div>
 
-      {/* Customer list — client-side pagination over Shopify results */}
-      {(() => {
-        const totalCount = customers.length;
-        const totalPages = Math.ceil(totalCount / LIMIT);
-        const paged = customers.slice((page - 1) * LIMIT, page * LIMIT);
-        return (
-          <>
-            <div className="card divide-y divide-gray-100">
-              {loading ? (
-                <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
-              ) : paged.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">
-                  {search ? 'No customers match your search' : 'No customers in Shopify yet'}
-                </div>
-              ) : (
-                paged.map(c => (
-                  <div
-                    key={c.id}
-                    onClick={() => navigate(`/customers/${c.id}`)}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900">
-                        {c.first_name || ''} {c.last_name || ''}
-                        {!c.first_name && !c.last_name && <span className="text-gray-400 italic">No name</span>}
-                      </p>
-                      <p className="text-xs text-gray-500">{c.email}</p>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0 ml-4">
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-gray-900">${c.total_spent || '0.00'}</p>
-                        <p className="text-xs text-gray-400">{c.orders_count || 0} orders</p>
-                      </div>
-                      <Arrow size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-4">
-                <p className="text-sm text-gray-500">
-                  Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, totalCount)} of {totalCount}
+      {/* Customer list */}
+      <div className="card divide-y divide-gray-100">
+        {loading ? (
+          <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
+        ) : customers.length === 0 ? (
+          <div className="p-8 text-center text-gray-400">
+            {search ? 'No customers match your search' : 'No customers in Shopify yet'}
+          </div>
+        ) : (
+          customers.map(c => (
+            <div
+              key={c.id}
+              onClick={() => navigate(`/customers/${c.id}`)}
+              className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-900">
+                  {c.first_name || ''} {c.last_name || ''}
+                  {!c.first_name && !c.last_name && <span className="text-gray-400 italic">No name</span>}
                 </p>
-                <div className="flex gap-2">
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                    className="btn-secondary flex items-center gap-1">
-                    <ChevronLeft size={14} /> Previous
-                  </button>
-                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                    className="btn-secondary flex items-center gap-1">
-                    Next <ChevronRight size={14} />
-                  </button>
-                </div>
+                <p className="text-xs text-gray-500">{c.email}</p>
               </div>
-            )}
-            {totalPages <= 1 && !loading && (
-              <p className="text-xs text-gray-400 mt-3 text-center">
-                Showing {paged.length} of {totalCount} customers — data fetched live from Shopify
-              </p>
-            )}
-          </>
-        );
-      })()}
+              <div className="flex items-center gap-4 shrink-0 ml-4">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-900">${c.total_spent || '0.00'}</p>
+                  <p className="text-xs text-gray-400">{c.orders_count || 0} orders</p>
+                </div>
+                <Arrow size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {Math.ceil(total / LIMIT) > 1 && (
+        <div className="flex items-center justify-between mt-4">
+          <p className="text-sm text-gray-500">
+            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, total)} of {total}
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+              className="btn-secondary flex items-center gap-1">
+              <ChevronLeft size={14} /> Previous
+            </button>
+            <button onClick={() => setPage(p => Math.min(Math.ceil(total / LIMIT), p + 1))} disabled={page === Math.ceil(total / LIMIT)}
+              className="btn-secondary flex items-center gap-1">
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Create customer modal */}
       {showCreate && (

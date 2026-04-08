@@ -41,6 +41,15 @@ async def send_text_message(to_phone: str, text: str, config: dict) -> dict:
         print(msg)
         return {"error": "not_configured", "detail": msg}
 
+    # Coerce text into a plain string. Some callers may pass dicts
+    # like {'reply': '...'} from AI agents — Meta requires a string.
+    if isinstance(text, dict):
+        text = text.get("reply") or text.get("message") or str(text)
+    elif text is None:
+        text = ""
+    else:   
+        text = str(text)
+
     # WhatsApp max message length is 4096 characters
     if len(text) > 4096:
         text = text[:4090] + "…"

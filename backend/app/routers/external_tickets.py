@@ -128,9 +128,15 @@ async def create_external_ticket(
                 channel="whatsapp" if data.channel == "whatsapp" else None,
             )
             await db.messages.insert_one(msg.model_dump())
+        update_fields = {"updated_at": datetime.now(timezone.utc), "status": "open"}
+        if images:
+            # Merge new image URLs into the ticket's images list (deduplicated)
+            existing_images = existing.get("images") or []
+            merged_images = list(dict.fromkeys(existing_images + images))
+            update_fields["images"] = merged_images
         await db.tickets.update_one(
             {"_id": existing["_id"]},
-            {"$set": {"updated_at": datetime.now(timezone.utc), "status": "open"}},
+            {"$set": update_fields},
         )
         await log_activity(
             entity_type="ticket",
@@ -142,6 +148,11 @@ async def create_external_ticket(
             description=f"Follow-up message merged into existing ticket from {shop_domain}",
             customer_email=data.customer_email,
         )
+        # Refresh the ticket document to return the updated state
+        updated = await db.tickets.find_one({"_id": existing["_id"]})
+        if updated:
+            updated.pop("_id", None)
+            return {"merged": True, "ticket": updated}
         existing.pop("_id", None)
         return {"merged": True, "ticket": existing}
 

@@ -872,7 +872,15 @@ export default function RequestPage() {
                       const src = `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/media/whatsapp/${m.id}`;
 
                       if (mediaType === 'image' || mediaType.startsWith('image/')) {
-                        return <img src={src} alt="WhatsApp image" className="mt-2 max-w-xs rounded-lg cursor-pointer hover:opacity-90" onClick={() => window.open(src, '_blank')} />;
+                        return <img src={src} alt="WhatsApp image" className="mt-2 max-w-xs rounded-lg cursor-pointer hover:opacity-90" onClick={() => window.open(src, '_blank')}
+                          onError={e => {
+                            e.currentTarget.style.display = 'none';
+                            e.currentTarget.parentElement.innerHTML =
+                              `<div class="mt-2 w-32 h-24 flex flex-col items-center justify-center bg-gray-100 rounded-lg border border-gray-200 gap-1 p-1">` +
+                              `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>` +
+                              `<span class="text-xs text-gray-400 text-center leading-tight">View image</span>` +
+                              `</div>`;
+                          }} />;
                       }
                       if (mediaType === 'video' || mediaType.startsWith('video/')) {
                         return <video src={src} controls className="mt-2 max-w-xs rounded-lg" />;
@@ -917,7 +925,15 @@ export default function RequestPage() {
                   <div className="flex flex-wrap gap-2">
                     {selectedTicket.images.map((url, i) => (
                       <a key={i} href={url} target="_blank" rel="noopener noreferrer">
-                        <img src={url} alt={`attachment ${i + 1}`} className="h-24 w-24 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity" />
+                        <img src={url} alt={`attachment ${i + 1}`} className="h-24 w-24 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity"
+                          onError={e => {
+                            e.currentTarget.style.display = 'none';
+                            e.currentTarget.parentElement.innerHTML =
+                              `<div class="h-24 w-24 flex flex-col items-center justify-center bg-gray-100 rounded-lg border border-gray-200 gap-1 p-1">` +
+                              `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>` +
+                              `<span class="text-xs text-gray-400 text-center leading-tight">View image</span>` +
+                              `</div>`;
+                          }} />
                       </a>
                     ))}
                   </div>
@@ -1001,7 +1017,15 @@ export default function RequestPage() {
                                 return typeof rawUrl === 'string' ? rawUrl : rawUrl?.url || rawUrl?.link || null
                               })()
                           return isImage ? (
-                            <img key={idx} src={src} alt="Proof" className="w-16 h-16 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80" onClick={() => window.open(src, '_blank')} />
+                            <img key={idx} src={src} alt="Proof" className="w-16 h-16 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80" onClick={() => window.open(src, '_blank')}
+                              onError={e => {
+                                e.currentTarget.style.display = 'none';
+                                e.currentTarget.parentElement.innerHTML =
+                                  `<div class="w-16 h-16 flex flex-col items-center justify-center bg-gray-100 rounded-lg border border-gray-200 gap-0.5">` +
+                                  `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>` +
+                                  `<span class="text-xs text-gray-400 leading-tight">Image</span>` +
+                                  `</div>`;
+                              }} />
                           ) : (
                             <a key={idx} href={src} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs hover:bg-gray-200">
                               📎 {mediaType || 'file'}
