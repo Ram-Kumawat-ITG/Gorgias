@@ -82,7 +82,7 @@ export default function InboxPage() {
 
   useEffect(() => {
     loadTickets();
-  }, [status, page]);
+  }, [status, page, channel, ticketType]);
 
   // Silent background poll — checks for new inbound tickets every 10 seconds
   useEffect(() => {
@@ -194,6 +194,9 @@ export default function InboxPage() {
                 {t.tags?.map(tag => (
                   <span key={tag} className="badge bg-gray-100 text-gray-600">{tag}</span>
                 ))}
+                {t.images?.length > 0 && (
+                  <span className="badge bg-gray-100 text-gray-500">📎 {t.images.length}</span>
+                )}
                 <span className={clsx('badge', PRIORITY_COLORS[t.priority] || PRIORITY_COLORS.normal)}>
                   {t.priority}
                 </span>

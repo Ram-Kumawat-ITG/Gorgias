@@ -279,10 +279,22 @@ async def list_orders(search: str = "", limit: int = Query(50, ge=1, le=250),
 async def get_orders_by_customer(customer_id: str, merchant_id: Optional[str] = Query(None),
                                   agent=Depends(get_current_agent)):
     store_domain, access_token = await get_shopify_creds(merchant_id)
+    creds = {"store_domain": store_domain, "access_token": access_token}
     try:
-        data = await shopify_get(f"/customers/{customer_id}/orders.json", {"status": "any", "limit": 50},
-                                 store_domain=store_domain, access_token=access_token)
-        return [_format_order(o) for o in data.get("orders", [])]
+        all_orders = []
+        since_id = 0
+        while True:
+            data = await shopify_get(
+                f"/customers/{customer_id}/orders.json",
+                {"status": "any", "limit": 250, "since_id": since_id},
+                **creds,
+            )
+            page = data.get("orders", [])
+            all_orders.extend(page)
+            if len(page) < 250:
+                break
+            since_id = page[-1]["id"]
+        return [_format_order(o) for o in all_orders]
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 

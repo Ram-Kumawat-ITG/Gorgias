@@ -631,7 +631,7 @@ export default function OrderDetailPage() {
                 {!isFulfilled && !isRefunded && (
                   <button onClick={() => setFulfillModal(true)} disabled={!!actionLoading}
                     className="btn-primary w-full flex items-center justify-center gap-2 text-sm">
-                    <Truck size={15} /> Fulfill Items
+                    <Truck size={15} /> Fulfill Order
                   </button>
                 )}
                 {!isPaid && !isRefunded && (
@@ -925,7 +925,7 @@ export default function OrderDetailPage() {
             </div>
           </div>
           <ModalFooter onClose={() => setFulfillModal(false)} onAction={handleFulfill}
-            loading={actionLoading === 'Fulfillment'} label="Fulfill Items" />
+            loading={actionLoading === 'Fulfillment'} label="Fulfill Order" />
         </Modal>
       )}
 

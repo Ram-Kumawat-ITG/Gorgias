@@ -15,7 +15,7 @@ const PRIORITY_BADGE = {
 
 const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low']
 
-const CHANNEL_OPTIONS = ['email', 'whatsapp', 'instagram', 'manual', 'shopify']
+const CHANNEL_OPTIONS = ['email', 'whatsapp', 'manual']
 
 const EMPTY_FORM = {
   name: '',
@@ -23,7 +23,7 @@ const EMPTY_FORM = {
   first_response_hours: '',
   resolution_hours: '',
   warning_hours: '',
-  applies_to_channels: ['email', 'whatsapp', 'instagram', 'manual'],
+  applies_to_channels: ['email', 'whatsapp', 'manual'],
   is_active: true,
 }
 

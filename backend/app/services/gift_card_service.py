@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models.gift_card import GiftCardAssignment
 from app.services.shopify_client import shopify_get, shopify_post, ShopifyAPIError
 from app.services.activity_service import log_activity
+from app.services.shopify_sync import fetch_and_sync_customer
 
 
 async def fetch_shopify_gift_cards(status: str = "enabled", limit: int = 50) -> list:
@@ -65,7 +66,7 @@ async def get_shopify_gift_card(gift_card_id: str) -> dict | None:
         return None
 
 
-async def create_shopify_gift_card(initial_value: str, currency: str = "INR", note: str = "") -> dict | None:
+async def create_shopify_gift_card(initial_value: str, currency: str = "INR", note: str = "", customer_id: str = None) -> dict | None:
     """Create a NEW gift card on Shopify. This is the ONLY time Shopify returns the full code.
     Returns the full gift card dict including the complete code, or None on failure."""
     try:
@@ -77,6 +78,8 @@ async def create_shopify_gift_card(initial_value: str, currency: str = "INR", no
         }
         if note:
             payload["gift_card"]["note"] = note
+        if customer_id:
+            payload["gift_card"]["customer_id"] = int(customer_id)
         result = await shopify_post("/gift_cards.json", payload)
         gc = result.get("gift_card", {})
         if gc:
@@ -112,9 +115,10 @@ async def assign_gift_card(
     then stores the assignment with the complete code."""
     db = get_db()
 
-    # Look up customer_id
-    customer = await db.customers.find_one({"email": customer_email})
-    customer_id = customer.get("id") if customer else None
+    # Sync customer from Shopify to ensure we have the latest shopify_customer_id
+    synced = await fetch_and_sync_customer(customer_email, force_refresh=True)
+    customer_id = synced.get("id")
+    shopify_customer_id = synced.get("shopify_customer_id")
 
     # Create a NEW Shopify gift card so we get the full code
     # (Shopify never returns the full code after creation — only last_characters)
@@ -122,6 +126,7 @@ async def assign_gift_card(
         initial_value=balance,
         currency=currency,
         note=f"Assigned to {customer_email} via {channel}",
+        customer_id=shopify_customer_id,
     )
 
     if new_card and new_card.get("code"):

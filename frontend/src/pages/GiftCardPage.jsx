@@ -24,6 +24,8 @@ export default function GiftCardPage() {
   const [assigning, setAssigning] = useState(false);
   // Toast
   const [toast, setToast] = useState(null);
+  // Expire confirmation state
+  const [expireConfirm, setExpireConfirm] = useState(null); // null or assignment id
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
@@ -111,15 +113,21 @@ export default function GiftCardPage() {
   }
 
   // ── Expire gift card ────────────────────────────────────────────────
-  async function handleExpire(assignmentId) {
-    if (!confirm('Are you sure you want to expire this gift card? This will disable it on Shopify and cannot be undone.')) return;
+  async function confirmExpire() {
+    if (!expireConfirm) return;
     try {
-      await api.post(`/gift-cards/assignments/${assignmentId}/expire`);
+      await api.post(`/gift-cards/assignments/${expireConfirm}/expire`);
+      setExpireConfirm(null);
       showToast('Gift card expired successfully');
       loadHistory();
     } catch (err) {
+      setExpireConfirm(null);
       showToast('Expire failed: ' + (err.response?.data?.detail || err.message), 'error');
     }
+  }
+
+  async function handleExpire(assignmentId) {
+    setExpireConfirm(assignmentId);
   }
 
   // ── Format code with spaces (XXXX XXXX XXXX XXXX) ─────────────────
@@ -404,7 +412,6 @@ export default function GiftCardPage() {
                 >
                   <option value="email">Email</option>
                   <option value="whatsapp">WhatsApp</option>
-                  <option value="instagram">Instagram</option>
                 </select>
               </div>
 
@@ -429,6 +436,20 @@ export default function GiftCardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Expire confirmation modal */}
+      {expireConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-2">Expire this gift card?</h3>
+            <p className="text-sm text-gray-500 mb-5">This will disable the gift card on Shopify and cannot be undone.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setExpireConfirm(null)} className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={confirmExpire} className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700">Expire</button>
+            </div>
           </div>
         </div>
       )}

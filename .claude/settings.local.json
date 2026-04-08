@@ -9,7 +9,12 @@
       "Bash(venv/Scripts/python -c \":*)",
       "Bash(grep -n 'pending_admin\\\\|$in.*open\\\\|open.*pending' app/services/ticket_service.py app/routers/tickets.py)",
       "Bash(python -c \"import py_compile; py_compile.compile\\('backend/app/services/whatsapp_ai_agent.py', doraise=True\\); py_compile.compile\\('backend/app/services/whatsapp_service.py', doraise=True\\); py_compile.compile\\('backend/app/routers/whatsapp.py', doraise=True\\); print\\('All files OK'\\)\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"merchant\" /c/Gorgias/shopify-helpdesk/backend/app/routers/*.py --include=\"*.py\" -l)",
+      "Bash(grep -r \"Depends\\\\|FastAPI\\\\|dependency\" /c/Gorgias/shopify-helpdesk/backend/app/routers/*.py --include=\"*.py\")",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep \"\\\\.py$\")",
+      "Bash(find /c/Gorgias/shopify-helpdesk/frontend/src -type f -name *.jsx -o -name *.js)"
     ]
   }
 }

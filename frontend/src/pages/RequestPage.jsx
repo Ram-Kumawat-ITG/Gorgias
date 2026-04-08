@@ -248,7 +248,9 @@ export default function RequestPage() {
   useEffect(() => {
     channelsApi.list()
       .then(res => {
-        const mapped = res.data.channels.map(toTabChannel)
+        const mapped = res.data.channels
+          .filter(ch => ch.value !== 'shopify' && ch.value !== 'instagram')
+          .map(toTabChannel)
         if (mapped.length > 0) setChannels(mapped)
       })
       .catch(() => setChannelsError('Could not load channels'))
@@ -471,7 +473,13 @@ export default function RequestPage() {
   useEffect(() => {
     if (!shopifyOrder?.customer_id) return
     customersApi.get(shopifyOrder.customer_id, selectedTicket?.merchant_id || null)
-      .then(res => { if (res.data?.customer) setShopifyCustomer(res.data.customer) })
+      .then(res => {
+        if (res.data?.customer) {
+          const c = res.data.customer
+          // Override orders_count with the actual fetched count (Shopify's field is often stale/partial)
+          setShopifyCustomer({ ...c, orders_count: res.data.orders?.length ?? c.orders_count })
+        }
+      })
       .catch(() => {})
   }, [shopifyOrder?.customer_id])
 
@@ -484,7 +492,15 @@ export default function RequestPage() {
     setInventoryLoading(true)
     setInventoryError(false)
     shopifyApi.getInventory(variantIds, selectedTicket?.merchant_id || null)
-      .then(res => { setInventory(res.data.inventory || []); setInventoryError(false) })
+      .then(res => {
+        if (res.data.error) {
+          setInventory([]);
+          setInventoryError(true);
+        } else {
+          setInventory(res.data.inventory || []);
+          setInventoryError(false);
+        }
+      })
       .catch(() => { setInventory([]); setInventoryError(true) })
       .finally(() => setInventoryLoading(false))
   }, [shopifyOrder])
@@ -814,7 +830,7 @@ export default function RequestPage() {
                     </span>
                   )}
                   <span className="text-xs text-gray-400">
-                    {new Date(selectedTicket.created_at).toLocaleString()}
+                    {new Date(selectedTicket.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · {new Date(selectedTicket.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                   </span>
                 </div>
               </div>
@@ -893,6 +909,20 @@ export default function RequestPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Ticket-level image attachments */}
+              {selectedTicket.images?.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-gray-500 mb-2">Attachments ({selectedTicket.images.length})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTicket.images.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                        <img src={url} alt={`attachment ${i + 1}`} className="h-24 w-24 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Pending Admin Action Banner */}
               {selectedTicket.status === 'pending_admin_action' && (

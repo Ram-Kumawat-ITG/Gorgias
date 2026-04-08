@@ -103,6 +103,48 @@ async def create_external_ticket(
 
     images = [url for url in (data.images or []) if url and url.startswith("http")]
 
+    # Merge into existing open ticket for same customer + store instead of creating a duplicate
+    body = data.message or data.initial_message
+    existing = await db.tickets.find_one({
+        "customer_email": data.customer_email,
+        "store_domain": shop_domain,
+        "status": "open",
+    })
+    if existing is None:
+        existing = await db.tickets.find_one({
+            "customer_email": data.customer_email,
+            "source_store": shop_domain,
+            "status": "open",
+        })
+
+    if existing:
+        existing_id = str(existing["id"]) if existing.get("id") else str(existing["_id"])
+        if body or images:
+            msg = MessageInDB(
+                ticket_id=existing_id,
+                body=body or "",
+                sender_type="customer",
+                attachments=images,
+                channel="whatsapp" if data.channel == "whatsapp" else None,
+            )
+            await db.messages.insert_one(msg.model_dump())
+        await db.tickets.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"updated_at": datetime.now(timezone.utc), "status": "open"}},
+        )
+        await log_activity(
+            entity_type="ticket",
+            entity_id=existing_id,
+            event="message.added",
+            actor_type="external_store",
+            actor_id=shop_domain,
+            actor_name=shop_domain,
+            description=f"Follow-up message merged into existing ticket from {shop_domain}",
+            customer_email=data.customer_email,
+        )
+        existing.pop("_id", None)
+        return {"merged": True, "ticket": existing}
+
     ticket = TicketInDB(
         subject=data.subject,
         customer_email=data.customer_email,
@@ -122,10 +164,6 @@ async def create_external_ticket(
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)
     await db.tickets.insert_one(ticket_doc)
-
-    # `message` is the preferred field; fall back to `initial_message` for backward compat
-    body = data.message or data.initial_message
-    images = [url for url in (data.images or []) if url and url.startswith("http")]
 
     if body or images:
         msg_body = body or ""
@@ -158,7 +196,7 @@ async def create_external_ticket(
         pass
 
     ticket_doc.pop("_id", None)
-    return ticket_doc
+    return {"merged": False, "ticket": ticket_doc}
 
 
 # ---------------------------------------------------------------------------

@@ -33,17 +33,20 @@ export default function ReturnsPage() {
   const [resolution, setResolution] = useState("");
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
+  const [error, setError] = useState(null);
   const limit = 20;
 
   async function loadReturns() {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.get("/returns", {
         params: { status, resolution, page, limit },
       });
-      setReturns(res.data.returns);
-      setTotal(res.data.total);
-    } catch {
+      setReturns(res.data.returns ?? []);
+      setTotal(res.data.total ?? 0);
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Failed to load return requests');
     } finally {
       setLoading(false);
     }
@@ -138,6 +141,8 @@ export default function ReturnsPage() {
           <div className="flex items-center justify-center py-12">
             <div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
           </div>
+        ) : error ? (
+          <div className="p-8 text-center text-red-500">{error}</div>
         ) : returns.length === 0 ? (
           <div className="p-8 text-center text-gray-400">
             No return requests found

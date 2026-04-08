@@ -150,23 +150,60 @@ def _resolve_country_code(raw: str) -> str:
 @router.get("")
 async def list_customers(
     search: str = "",
-    limit: int = Query(50, ge=1, le=250),
+    limit: int = Query(20, ge=1, le=250),
+    page: int = Query(1, ge=1),
     merchant_id: Optional[str] = Query(None),
     agent=Depends(get_current_agent),
 ):
-    """Fetch customers from Shopify in real time. No MongoDB persistence."""
+    """Fetch customers from Shopify in real time. Paginates all results in Python."""
     store_domain, access_token = await get_shopify_creds(merchant_id)
     try:
-        params = {"limit": limit}
-        if search:
-            params["query"] = search
-            data = await shopify_get("/customers/search.json", params,
-                                     store_domain=store_domain, access_token=access_token)
-        else:
-            data = await shopify_get("/customers.json", params,
-                                     store_domain=store_domain, access_token=access_token)
-        customers = [_format_customer(c) for c in data.get("customers", [])]
-        return {"customers": customers, "total": len(customers)}
+        all_customers = []
+        since_id = 0
+        while True:
+            if search:
+                params = {"query": search, "limit": 250}
+                data = await shopify_get("/customers/search.json", params,
+                                         store_domain=store_domain, access_token=access_token)
+            else:
+                params = {"limit": 250, "since_id": since_id}
+                data = await shopify_get("/customers.json", params,
+                                         store_domain=store_domain, access_token=access_token)
+            batch = data.get("customers", [])
+            all_customers.extend(batch)
+            if len(batch) < 250 or search:
+                break
+            since_id = batch[-1]["id"]
+        customers = [_format_customer(c) for c in all_customers]
+        # For search results (small set), fetch actual order count per customer
+        # so orders_count reflects all orders, not just Shopify's cached field
+        if search and len(customers) <= 20:
+            import asyncio
+            async def _real_order_count(customer_id: str) -> int:
+                try:
+                    count = 0
+                    sid = 0
+                    while True:
+                        d = await shopify_get(
+                            f"/customers/{customer_id}/orders.json",
+                            {"status": "any", "limit": 250, "since_id": sid, "fields": "id"},
+                            store_domain=store_domain, access_token=access_token,
+                        )
+                        batch = d.get("orders", [])
+                        count += len(batch)
+                        if len(batch) < 250:
+                            break
+                        sid = batch[-1]["id"]
+                    return count
+                except Exception:
+                    return -1
+            counts = await asyncio.gather(*[_real_order_count(c["id"]) for c in customers])
+            for c, cnt in zip(customers, counts):
+                if cnt >= 0:
+                    c["orders_count"] = cnt
+        total = len(customers)
+        skip = (page - 1) * limit
+        return {"customers": customers[skip:skip + limit], "total": total}
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
@@ -182,13 +219,21 @@ async def get_customer(customer_id: str, merchant_id: Optional[str] = Query(None
                                       store_domain=store_domain, access_token=access_token)
         customer = _format_customer(cust_data.get("customer", {}))
 
-        orders_data = await shopify_get(
-            f"/customers/{customer_id}/orders.json",
-            {"status": "any", "limit": 50},
-            store_domain=store_domain, access_token=access_token,
-        )
+        all_orders_raw = []
+        since_id = 0
+        while True:
+            orders_data = await shopify_get(
+                f"/customers/{customer_id}/orders.json",
+                {"status": "any", "limit": 250, "since_id": since_id},
+                store_domain=store_domain, access_token=access_token,
+            )
+            batch = orders_data.get("orders", [])
+            all_orders_raw.extend(batch)
+            if len(batch) < 250:
+                break
+            since_id = batch[-1]["id"]
         orders = []
-        for o in orders_data.get("orders", []):
+        for o in all_orders_raw:
             ff = o.get("fulfillments") or []
             orders.append({
                 "id": str(o["id"]),

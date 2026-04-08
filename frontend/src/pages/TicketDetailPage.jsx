@@ -1,6 +1,6 @@
 // Ticket detail page — message thread, reply composer, customer sidebar
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import CustomerSidebar from '../components/CustomerSidebar';
 
@@ -40,6 +40,7 @@ const TYPE_COLORS = {
 
 export default function TicketDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [ticket, setTicket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState('');
@@ -48,6 +49,7 @@ export default function TicketDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   async function loadTicket() {
     try {
@@ -100,6 +102,14 @@ export default function TicketDetailPage() {
     } catch {}
   }
 
+  async function closeTicket() {
+    try {
+      await api.patch(`/tickets/${id}`, { status: 'closed' });
+      setShowCloseConfirm(false);
+      await loadTicket();
+    } catch {}
+  }
+
   async function approveAction() {
     setActionLoading(true);
     try {
@@ -128,6 +138,9 @@ export default function TicketDetailPage() {
       {/* Left: messages + composer */}
       <div className="flex-1 min-w-0">
         <div className="mb-4">
+          <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 mb-2">
+            ← Back
+          </button>
           <h1 className="text-xl font-semibold text-gray-900">{ticket.subject}</h1>
           <div className="flex items-center gap-2 mt-1">
             <span className="badge bg-gray-100 text-gray-600 capitalize">{ticket.status}</span>
@@ -524,13 +537,27 @@ export default function TicketDetailPage() {
             <button onClick={() => sendMessage(true)} className="btn-secondary" disabled={sending || !reply.trim()}>
               Add Internal Note
             </button>
-            {ticket.status !== 'resolved' && (
-              <button onClick={resolveTicket} className="btn-secondary ml-auto">
-                Resolve
+            {ticket.status !== 'closed' && (
+              <button onClick={() => setShowCloseConfirm(true)} className="btn-secondary ml-auto">
+                Close Ticket
               </button>
             )}
           </div>
         </div>
+
+        {/* Close ticket confirmation modal */}
+        {showCloseConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+              <h3 className="text-base font-semibold text-gray-900 mb-2">Close this ticket?</h3>
+              <p className="text-sm text-gray-500 mb-5">The ticket will be marked as closed and removed from the open queue.</p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setShowCloseConfirm(false)} className="btn-secondary">Cancel</button>
+                <button onClick={closeTicket} className="btn-primary bg-red-600 hover:bg-red-700">Close Ticket</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Right: customer sidebar */}

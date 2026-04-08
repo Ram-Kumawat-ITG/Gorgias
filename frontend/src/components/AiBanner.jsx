@@ -765,7 +765,8 @@ export default function AiBanner({
   }
   // Dynamic return window from backend policy data
   const rw = returnPolicyData?.return_window
-  const daysLeft = rw ? Math.max(0, rw.days - (rw.days_since_baseline ?? rw.days)) : null
+  const notFulfilled = rw?.baseline === 'not_fulfilled'
+  const daysLeft = (rw && !notFulfilled) ? Math.max(0, rw.days - (rw.days_since_baseline ?? rw.days)) : null
   const topConfidence = aiResult?.actions?.length
     ? Math.max(...aiResult.actions.map(a => a.confidence || 0))
     : null
@@ -912,10 +913,11 @@ export default function AiBanner({
                       : 'Return window'}
                 </p>
                 <p className={clsx('text-sm font-semibold mt-0.5',
-                  daysLeft === null ? 'text-gray-400' :
-                    daysLeft > 7 ? 'text-green-600' :
-                      daysLeft > 0 ? 'text-yellow-600' : 'text-red-500')}>
-                  {daysLeft === null ? '—' : daysLeft > 0 ? `${daysLeft} days left` : 'Expired'}
+                  notFulfilled ? 'text-gray-400' :
+                    daysLeft === null ? 'text-gray-400' :
+                      daysLeft > 7 ? 'text-green-600' :
+                        daysLeft > 0 ? 'text-yellow-600' : 'text-red-500')}>
+                  {notFulfilled ? 'Not fulfilled' : daysLeft === null ? '—' : daysLeft > 0 ? `${daysLeft} days left` : 'Expired'}
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
@@ -989,8 +991,10 @@ export default function AiBanner({
                     {shopifyOrder.line_items.map((li, idx) => {
                       const variantId = li.variant_id ? String(li.variant_id) : null
                       const inv = variantId ? inventory?.find(v => v.variant_id === variantId) : null
+                      // inv === null  → no variant_id on this line item
+                      // inv === undefined → variantId exists but not returned in inventory array
+                      const invMissing = variantId && inv === undefined
                       const qty = inv?.inventory_quantity  // null = not tracked, number = actual stock
-                      const tracked = inv?.tracked !== false && inv !== undefined
                       return (
                         <div key={idx} className="border-b border-gray-50 pb-2.5 last:border-0 last:pb-0">
                           <div className="flex items-start justify-between gap-2">
@@ -1008,8 +1012,10 @@ export default function AiBanner({
                           </div>
                           <div className="mt-1.5 flex items-center justify-between text-xs">
                             <span className="text-gray-400">Stock</span>
-                            {inv === undefined || inv === null ? (
+                            {inv === null ? (
                               <span className="text-gray-400">—</span>
+                            ) : invMissing ? (
+                              <span className="text-gray-400 italic">Unavailable</span>
                             ) : qty === null || qty === undefined ? (
                               <span className="text-gray-400 italic">Not tracked</span>
                             ) : qty > 10 ? (

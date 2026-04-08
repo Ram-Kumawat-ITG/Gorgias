@@ -1,16 +1,21 @@
 // Customers page — real-time Shopify data, create customer syncs to Shopify
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, ChevronRight as Arrow, X } from 'lucide-react';
+import { Search, Plus, ChevronRight as Arrow, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import api from '../api/client';
 import { useToast, ToastContainer } from '../components/Toast';
+
+const LIMIT = 20;
 
 export default function CustomersPage() {
   const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [total, setTotal] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const debounceRef = useRef(null);
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
@@ -25,15 +30,25 @@ export default function CustomersPage() {
   async function loadCustomers() {
     setLoading(true);
     try {
-      const res = await api.get('/customers', { params: { search, limit: 50 } });
-      setCustomers(res.data.customers);
-      setTotal(res.data.total);
+      const res = await api.get('/customers', { params: { search, limit: LIMIT, page } });
+      setCustomers(res.data.customers ?? []);
+      setTotal(res.data.total ?? 0);
     } catch (err) {
       addToast(err.response?.data?.detail || 'Failed to load customers from Shopify', 'error');
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { loadCustomers(); }, [search]);
+  // Debounce searchInput → search (300ms)
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchInput]);
+
+  useEffect(() => { loadCustomers(); }, [search, page]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -78,51 +93,78 @@ export default function CustomersPage() {
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
           placeholder="Search by name, email, or tag..."
           className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm
                      focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
       </div>
 
-      {/* Customer list */}
-      <div className="card divide-y divide-gray-100">
-        {loading ? (
-          <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
-        ) : customers.length === 0 ? (
-          <div className="p-8 text-center text-gray-400">
-            {search ? 'No customers match your search' : 'No customers in Shopify yet'}
-          </div>
-        ) : (
-          customers.map(c => (
-            <div
-              key={c.id}
-              onClick={() => navigate(`/customers/${c.id}`)}
-              className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-gray-900">
-                  {c.first_name || ''} {c.last_name || ''}
-                  {!c.first_name && !c.last_name && <span className="text-gray-400 italic">No name</span>}
-                </p>
-                <p className="text-xs text-gray-500">{c.email}</p>
-              </div>
-              <div className="flex items-center gap-4 shrink-0 ml-4">
-                <div className="text-right">
-                  <p className="text-sm font-medium text-gray-900">${c.total_spent || '0.00'}</p>
-                  <p className="text-xs text-gray-400">{c.orders_count || 0} orders</p>
+      {/* Customer list — client-side pagination over Shopify results */}
+      {(() => {
+        const totalCount = customers.length;
+        const totalPages = Math.ceil(totalCount / LIMIT);
+        const paged = customers.slice((page - 1) * LIMIT, page * LIMIT);
+        return (
+          <>
+            <div className="card divide-y divide-gray-100">
+              {loading ? (
+                <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>
+              ) : paged.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  {search ? 'No customers match your search' : 'No customers in Shopify yet'}
                 </div>
-                <Arrow size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
-              </div>
+              ) : (
+                paged.map(c => (
+                  <div
+                    key={c.id}
+                    onClick={() => navigate(`/customers/${c.id}`)}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-900">
+                        {c.first_name || ''} {c.last_name || ''}
+                        {!c.first_name && !c.last_name && <span className="text-gray-400 italic">No name</span>}
+                      </p>
+                      <p className="text-xs text-gray-500">{c.email}</p>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0 ml-4">
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-gray-900">${c.total_spent || '0.00'}</p>
+                        <p className="text-xs text-gray-400">{c.orders_count || 0} orders</p>
+                      </div>
+                      <Arrow size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
-          ))
-        )}
-      </div>
-
-      <p className="text-xs text-gray-400 mt-3 text-center">
-        Showing {customers.length} of {total} customers — data fetched live from Shopify
-      </p>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4">
+                <p className="text-sm text-gray-500">
+                  Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, totalCount)} of {totalCount}
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                    className="btn-secondary flex items-center gap-1">
+                    <ChevronLeft size={14} /> Previous
+                  </button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                    className="btn-secondary flex items-center gap-1">
+                    Next <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+            {totalPages <= 1 && !loading && (
+              <p className="text-xs text-gray-400 mt-3 text-center">
+                Showing {paged.length} of {totalCount} customers — data fetched live from Shopify
+              </p>
+            )}
+          </>
+        );
+      })()}
 
       {/* Create customer modal */}
       {showCreate && (

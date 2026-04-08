@@ -162,11 +162,9 @@ async def order_policy_check(
             if raw:
                 window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
                 baseline_label = "fulfillment"
-        if not window_baseline:
-            raw = order.get("created_at") or ""
-            if raw:
-                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                baseline_label = "order_created"
+        else:
+            # Order not yet fulfilled — policy window hasn't started
+            baseline_label = "not_fulfilled"
     except Exception:
         pass
 
@@ -239,11 +237,9 @@ async def return_policy_check(return_id: str, agent=Depends(get_current_agent)):
             if raw:
                 window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
                 baseline_label = "fulfillment"
-        if not window_baseline:
-            raw = order.get("created_at") or ""
-            if raw:
-                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                baseline_label = "order_created"
+        else:
+            # Order not yet fulfilled — policy window hasn't started
+            baseline_label = "not_fulfilled"
     except Exception:
         pass
 

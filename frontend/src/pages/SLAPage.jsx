@@ -20,10 +20,7 @@ const SLA_BADGE = {
 const CHANNEL_LABEL = {
   email:     'Email',
   whatsapp:  'WhatsApp',
-  instagram: 'Instagram',
   manual:    'Manual',
-  shopify:   'Shopify',
-  twitter:   'Twitter',
 }
 
 const COMPLIANCE_COLORS = {
@@ -386,7 +383,7 @@ export default function SLAPage() {
               <option value="">All Channels</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="email">Email</option>
-              <option value="instagram">Instagram</option>
+              <option value="manual">Manual</option>
             </select>
 
             <select

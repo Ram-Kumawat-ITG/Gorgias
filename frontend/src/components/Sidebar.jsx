@@ -1,5 +1,5 @@
 // Left navigation sidebar — links to all sections + agent info
-import { NavLink } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   Inbox,
   Users,
@@ -8,12 +8,12 @@ import {
   Zap,
   Bot,
   Shield,
-  LogOut,
   FileText,
   RotateCcw,
   Mail,
   Gift
 } from 'lucide-react';
+import clsx from 'clsx';
 
 function WhatsAppIcon({ size = 18 }) {
   return (
@@ -23,43 +23,32 @@ function WhatsAppIcon({ size = 18 }) {
   );
 }
 
-// function InstagramIcon({ size = 18 }) {
-//   return (
-//     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-//       <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/>
-//     </svg>
-//   );
-// }
-
-function XIcon({ size = 18 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-    </svg>
-  );
-}
-import useAuth from '../hooks/useAuth';
-import clsx from 'clsx';
-
+// matchPrefixes: array of path prefixes that should activate this item
 const NAV_ITEMS = [
-  { to: '/', icon: Inbox, label: 'Inbox' },
-  { to: '/customers', icon: Users, label: 'Customers' },
-  { to: '/orders', icon: ShoppingBag, label: 'Orders' },
-  { to: '/returns', icon: RotateCcw, label: 'Returns' },
-  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/sla', icon: Shield, label: 'SLA' },
-  { to: '/sla-policies', icon: Shield, label: 'SLA Policies' },
-  { to: '/macros', icon: Bot, label: 'Macros' },
-  { to: '/automations', icon: Zap, label: 'Automations' },
-  { to: '/requests', icon: FileText, label: 'Requests' },
-  { to: '/gift-cards', icon: Gift, label: 'Gift Cards' },
-  { to: '/whatsapp-settings', icon: WhatsAppIcon, label: 'WhatsApp' },
-  // { to: '/instagram-settings', icon: InstagramIcon, label: 'Instagram' },
-  { to: '/email-settings', icon: Mail, label: 'Email' },
+  { to: '/', icon: Inbox, label: 'Inbox', matchPrefixes: ['/', '/tickets'] },
+  { to: '/customers', icon: Users, label: 'Customers', matchPrefixes: ['/customers'] },
+  { to: '/orders', icon: ShoppingBag, label: 'Orders', matchPrefixes: ['/orders'] },
+  { to: '/analytics', icon: BarChart3, label: 'Analytics', matchPrefixes: ['/analytics'] },
+  { to: '/sla', icon: Shield, label: 'SLA', matchPrefixes: ['/sla'] },
+  { to: '/sla-policies', icon: Shield, label: 'SLA Policies', matchPrefixes: ['/sla-policies'] },
+  { to: '/macros', icon: Bot, label: 'Macros', matchPrefixes: ['/macros'] },
+  { to: '/automations', icon: Zap, label: 'Automations', matchPrefixes: ['/automations'] },
+  { to: '/requests', icon: FileText, label: 'Requests', matchPrefixes: ['/requests'] },
+  { to: '/returns', icon: RotateCcw, label: 'Returns', matchPrefixes: ['/returns'] },
+  { to: '/gift-cards', icon: Gift, label: 'Gift Cards', matchPrefixes: ['/gift-cards'] },
+  { to: '/whatsapp-settings', icon: WhatsAppIcon, label: 'WhatsApp', matchPrefixes: ['/whatsapp-settings'] },
+  { to: '/email-settings', icon: Mail, label: 'Email', matchPrefixes: ['/email-settings'] },
 ];
 
 export default function Sidebar() {
-  const { agent, logout } = useAuth();
+  const { pathname } = useLocation();
+
+  function isActive(item) {
+    return item.matchPrefixes.some(prefix => {
+      if (prefix === '/') return pathname === '/';
+      return pathname === prefix || pathname.startsWith(prefix + '/');
+    });
+  }
 
   return (
     <aside className="w-56 h-full bg-white border-r border-gray-200 flex flex-col shrink-0">
@@ -69,24 +58,23 @@ export default function Sidebar() {
 
       <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
         {NAV_ITEMS.map(item => (
-          <NavLink
+          <Link
             key={item.to}
             to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) => clsx(
+            className={clsx(
               'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              isActive
+              isActive(item)
                 ? 'bg-brand-50 text-brand-700'
                 : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
             )}
           >
             <item.icon size={18} />
             {item.label}
-          </NavLink>
+          </Link>
         ))}
       </nav>
 
       {/* Admin info removed per request */}
-    </aside>  
+    </aside>
   );
 }
