@@ -134,7 +134,7 @@ export default function TicketDetailPage() {
   if (!ticket) return <div className="p-8 text-center text-gray-400">Ticket not found</div>;
 
   return (
-    <div className="flex gap-6">
+    <div className="flex flex-col lg:flex-row gap-6">
       {/* Left: messages + composer */}
       <div className="flex-1 min-w-0">
         <div className="mb-4">
@@ -547,6 +547,20 @@ export default function TicketDetailPage() {
             <button onClick={() => sendMessage(true)} className="btn-secondary" disabled={sending || !reply.trim()}>
               Add Internal Note
             </button>
+            {ticket.status === 'open' && (
+              <button onClick={async () => {
+                try { await api.patch(`/tickets/${id}`, { status: 'pending' }); await loadTicket(); } catch {}
+              }} className="btn-secondary">
+                Mark Pending
+              </button>
+            )}
+            {ticket.status === 'pending' && (
+              <button onClick={async () => {
+                try { await api.patch(`/tickets/${id}`, { status: 'open' }); await loadTicket(); } catch {}
+              }} className="btn-secondary">
+                Reopen
+              </button>
+            )}
             {ticket.status !== 'closed' && (
               <button onClick={() => setShowCloseConfirm(true)} className="btn-secondary ml-auto">
                 Close Ticket
@@ -571,7 +585,7 @@ export default function TicketDetailPage() {
       </div>
 
       {/* Right: customer sidebar */}
-      <div className="w-80 shrink-0">
+      <div className="w-full lg:w-80 shrink-0">
         <CustomerSidebar ticket={ticket} />
       </div>
     </div>

@@ -6,6 +6,18 @@ import api from '../api/client';
 import SLABadge from '../components/SLABadge';
 import clsx from 'clsx';
 
+// ── Tag color helper — deterministic color from tag name hash ──
+const TAG_PALETTE = [
+  'bg-blue-100 text-blue-800', 'bg-green-100 text-green-800',
+  'bg-purple-100 text-purple-800', 'bg-amber-100 text-amber-800',
+  'bg-pink-100 text-pink-800', 'bg-teal-100 text-teal-800',
+  'bg-indigo-100 text-indigo-800', 'bg-rose-100 text-rose-800',
+];
+function tagColor(name) {
+  const hash = [...(name || '').toLowerCase()].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
+}
+
 const STATUSES = ['open', 'pending', 'resolved', 'closed'];
 const TICKET_TYPES = [
   { value: '', label: 'All Types' },
@@ -126,7 +138,7 @@ export default function InboxPage() {
       </div>
 
       {/* Status tabs */}
-      <div className="flex gap-1 mb-4">
+      <div className="flex flex-wrap gap-1 mb-4">
         {STATUSES.map(s => (
           <button
             key={s}
@@ -173,7 +185,7 @@ export default function InboxPage() {
             <div
               key={t.id}
               onClick={() => navigate(`/tickets/${t.id}`)}
-              className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors gap-2 sm:gap-0"
             >
               <div className="min-w-0 flex-1 flex items-center gap-2">
                 {(() => {
@@ -185,15 +197,21 @@ export default function InboxPage() {
                   <p className="text-xs text-gray-500 mt-0.5">{t.customer_email}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 ml-4 shrink-0">
+              <div className="flex items-center flex-wrap gap-2 sm:ml-4 shrink-0">
                 {t.ticket_type && t.ticket_type !== 'general' && (
                   <span className={clsx('badge', TYPE_COLORS[t.ticket_type] || TYPE_COLORS.general)}>
                     {t.ticket_type.replace('_', ' ')}
                   </span>
                 )}
-                {t.tags?.map(tag => (
-                  <span key={tag} className="badge bg-gray-100 text-gray-600">{tag}</span>
-                ))}
+                {(() => {
+                  const tags = [...new Set((t.tags || []).map(g => g.trim()).filter(Boolean))];
+                  const visible = tags.slice(0, 2);
+                  const extra = tags.length - visible.length;
+                  return <>
+                    {visible.map(tag => <span key={tag} className={clsx('badge', tagColor(tag))}>{tag}</span>)}
+                    {extra > 0 && <span className="badge bg-gray-100 text-gray-500">+{extra}</span>}
+                  </>;
+                })()}
                 {t.images?.length > 0 && (
                   <span className="badge bg-gray-100 text-gray-500">📎 {t.images.length}</span>
                 )}

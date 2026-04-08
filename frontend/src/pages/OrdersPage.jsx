@@ -118,7 +118,7 @@ export default function OrdersPage() {
               <div className="p-8 text-center text-gray-400">No orders found</div>
             ) : pagedOrders.map(o => (
               <div key={o.id} onClick={() => navigate(`/orders/${o.id}`)}
-                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group">
+                className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group gap-2 sm:gap-0">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <span className="text-sm font-semibold text-gray-900 w-20">{o.name || `#${o.order_number}`}</span>
                   <div className="min-w-0 flex-1">
@@ -180,7 +180,7 @@ export default function OrdersPage() {
             <div className="p-8 text-center text-gray-400">No draft orders</div>
           ) : drafts.map(d => (
             <div key={d.id} onClick={() => navigate(`/orders/${d.id}?type=draft`)}
-              className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group">
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group gap-2 sm:gap-0">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <span className="text-sm font-semibold text-gray-900 w-20">{d.name || d.id}</span>
                 <div className="min-w-0 flex-1">

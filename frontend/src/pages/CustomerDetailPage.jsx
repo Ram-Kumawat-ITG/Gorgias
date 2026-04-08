@@ -114,7 +114,7 @@ export default function CustomerDetailPage() {
   const initials = ((customer.first_name?.[0] || '') + (customer.last_name?.[0] || '')).toUpperCase() || '?';
 
   return (
-    <div className="flex gap-0 -m-6 min-h-screen">
+    <div className="flex flex-col lg:flex-row gap-0 -m-6 min-h-screen">
 
       {/* ═══════ LEFT: Main content ═══════ */}
       <div className="flex-1 p-6 overflow-auto">
@@ -226,7 +226,7 @@ export default function CustomerDetailPage() {
       </div>
 
       {/* ═══════ RIGHT: Sidebar ═══════ */}
-      <div className="w-80 border-l border-gray-200 bg-white p-5 overflow-y-auto shrink-0">
+      <div className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-gray-200 bg-white p-5 overflow-y-auto shrink-0">
         {/* Customer header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-sm font-semibold text-gray-600">

@@ -111,6 +111,18 @@ const STATUS_COLORS = {
   closed: 'bg-gray-100 text-gray-600',
 }
 
+// ── Tag color helper — deterministic color from tag name hash ──
+const TAG_PALETTE = [
+  'bg-blue-100 text-blue-800', 'bg-green-100 text-green-800',
+  'bg-purple-100 text-purple-800', 'bg-amber-100 text-amber-800',
+  'bg-pink-100 text-pink-800', 'bg-teal-100 text-teal-800',
+  'bg-indigo-100 text-indigo-800', 'bg-rose-100 text-rose-800',
+];
+function tagColor(name) {
+  const hash = [...(name || '').toLowerCase()].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
+}
+
 const FINANCIAL_COLORS = {
   paid: 'bg-green-100 text-green-700',
   pending: 'bg-yellow-100 text-yellow-700',
@@ -806,7 +818,7 @@ export default function RequestPage() {
             Back to Requests
           </button>
 
-          <div className="flex gap-6">
+          <div className="flex flex-col xl:flex-row gap-6">
             {/* Left — messages + AI panel */}
             <div className="flex-1 min-w-0">
               <div className="mb-4">
@@ -1145,36 +1157,48 @@ export default function RequestPage() {
                 </div>
               )}
 
-              {/* ── AiBanner: 7-section unified analysis panel ── */}
-              <AiBanner
-                aiResult={aiResult}
-                aiLoading={aiLoading}
-                aiError={aiError}
-                aiProcessResult={aiProcessResult}
-                selectedTicket={selectedTicket}
-                shopifyOrder={shopifyOrder}
-                shopifyCustomer={shopifyCustomer}
-                actionResult={actionResult}
-                activeActionIndex={activeActionIndex}
-                setActiveActionIndex={setActiveActionIndex}
-                executeAction={executeAction}
-                handleAnalyze={handleAnalyze}
-                handleProcessTicket={handleProcessTicket}
-                getFieldValue={getFieldValue}
-                handleFieldChange={handleFieldChange}
-                inventory={inventory}
-                inventoryLoading={inventoryLoading}
-                inventoryError={inventoryError}
-                onRetryInventory={() => fetchInventory(shopifyOrder)}
-                sendPrompt={sendPrompt}
-                approveAction={approveAction}
-                onClear={() => { setAiResult(null); setActionResult({}); setActiveActionIndex(null) }}
-              />
+              {/* ── AiBanner: only for return/refund/replacement/exchange/damage tickets ── */}
+              {(() => {
+                const SHOW_BANNER_TYPES = ['return', 'refund', 'replacement', 'replace', 'cancel', 'cancel_requested', 'exchange']
+                const typeMatch = SHOW_BANNER_TYPES.includes(selectedTicket?.ticket_type)
+                const subject = (selectedTicket?.subject || '').toLowerCase()
+                const firstMsg = (messages?.[0]?.body || '').toLowerCase()
+                const text = subject + ' ' + firstMsg
+                const keywords = ['return', 'refund', 'replace', 'replacement', 'exchange', 'money back', 'send back', 'wrong item', 'damaged', 'defective', 'broken', 'not working', 'cancel']
+                const keywordMatch = keywords.some(k => text.includes(k))
+                if (!typeMatch && !keywordMatch) return null
+                return (
+                  <AiBanner
+                    aiResult={aiResult}
+                    aiLoading={aiLoading}
+                    aiError={aiError}
+                    aiProcessResult={aiProcessResult}
+                    selectedTicket={selectedTicket}
+                    shopifyOrder={shopifyOrder}
+                    shopifyCustomer={shopifyCustomer}
+                    actionResult={actionResult}
+                    activeActionIndex={activeActionIndex}
+                    setActiveActionIndex={setActiveActionIndex}
+                    executeAction={executeAction}
+                    handleAnalyze={handleAnalyze}
+                    handleProcessTicket={handleProcessTicket}
+                    getFieldValue={getFieldValue}
+                    handleFieldChange={handleFieldChange}
+                    inventory={inventory}
+                    inventoryLoading={inventoryLoading}
+                    inventoryError={inventoryError}
+                    onRetryInventory={() => fetchInventory(shopifyOrder)}
+                    sendPrompt={sendPrompt}
+                    approveAction={approveAction}
+                    onClear={() => { setAiResult(null); setActionResult({}); setActiveActionIndex(null) }}
+                  />
+                )
+              })()}
 
             </div>
 
             {/* Right — ticket info sidebar */}
-            <div className="w-72 shrink-0 space-y-4">
+            <div className="w-full xl:w-72 shrink-0 space-y-4">
 
               {/* Customer card */}
               <div className="card p-4">
@@ -1214,8 +1238,8 @@ export default function RequestPage() {
                 <div className="card p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-3">Tags</h3>
                   <div className="flex flex-wrap gap-1">
-                    {selectedTicket.tags.map((tag) => (
-                      <span key={tag} className="badge bg-gray-100 text-gray-600">{tag}</span>
+                    {[...new Set(selectedTicket.tags.map(t => t.trim()).filter(Boolean))].map(tag => (
+                      <span key={tag} className={clsx('badge', tagColor(tag))}>{tag}</span>
                     ))}
                   </div>
                 </div>

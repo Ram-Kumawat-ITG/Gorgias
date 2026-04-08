@@ -132,7 +132,7 @@ const TICKET_TYPE_LABEL = {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function computePolicies(shopifyOrder, selectedTicket, returnPolicyData = null) {
+function computePolicies(shopifyOrder, selectedTicket, returnPolicyData = null, returnPolicyLoading = false) {
   if (!shopifyOrder) return []
   const isCancelled = !!shopifyOrder.cancelled_at
   const isPaid = shopifyOrder.financial_status === 'paid'
@@ -160,13 +160,20 @@ function computePolicies(shopifyOrder, selectedTicket, returnPolicyData = null) 
         : rw.pass ? `${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} left`
         : 'Expired',
     })
-  } else {
-    // Fallback only while backend data is loading — no hardcoded window
+  } else if (returnPolicyLoading) {
     policies.push({
       label: windowLabel,
       pass: false,
       warn: true,
       detail: 'Loading policy…',
+    })
+  } else {
+    // No policy data and not loading — N/A (order not fulfilled or no return record)
+    policies.push({
+      label: windowLabel,
+      pass: null,
+      warn: false,
+      detail: 'N/A',
     })
   }
 
@@ -314,6 +321,7 @@ function buildTimeline(shopifyOrder) {
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 function PolicyBadge({ pass, warn, detail }) {
+  if (pass === null) return <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{detail}</span>
   if (pass) return <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-green-50 text-green-700">{detail}</span>
   if (warn) return <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-yellow-50 text-yellow-700">{detail}</span>
   return <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-red-50 text-red-600">{detail}</span>
@@ -533,7 +541,7 @@ export default function AiBanner({
   const [returnPolicyLoading, setReturnPolicyLoading] = useState(false)
 
   const isWhatsApp = selectedTicket?.channel === 'whatsapp'
-  const policies = computePolicies(shopifyOrder, selectedTicket, returnPolicyData)
+  const policies = computePolicies(shopifyOrder, selectedTicket, returnPolicyData, returnPolicyLoading)
   const timeline = buildTimeline(shopifyOrder)
 
   // ── Quick-action local state ──────────────────────────────────────────────
@@ -1051,7 +1059,7 @@ export default function AiBanner({
                     <div key={i} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
                       <span className="text-xs text-gray-700">{p.label}</span>
                       <PolicyBadge pass={p.pass} warn={p.warn} detail={
-                        p.pass ? (p.detail || 'Pass') : p.warn ? (p.detail || 'Warning') : (p.detail || 'Fail')
+                        p.pass === null ? (p.detail || 'N/A') : p.pass ? (p.detail || 'Pass') : p.warn ? (p.detail || 'Warning') : (p.detail || 'Fail')
                       } />
                     </div>
                   ))}
