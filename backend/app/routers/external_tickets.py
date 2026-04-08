@@ -101,6 +101,8 @@ async def create_external_ticket(
 
     admin_id = await _get_admin_agent_id()
 
+    images = [url for url in (data.images or []) if url and url.startswith("http")]
+
     ticket = TicketInDB(
         subject=data.subject,
         customer_email=data.customer_email,
@@ -112,6 +114,7 @@ async def create_external_ticket(
         channel=data.channel.value if hasattr(data.channel, "value") else data.channel,
         priority=data.priority.value if hasattr(data.priority, "value") else data.priority,
         tags=data.tags,
+        images=images,
         ticket_type=classify_ticket_type(data.subject, data.initial_message or data.message or ""),
         assignee_id=admin_id,
     )
