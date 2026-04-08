@@ -36,6 +36,8 @@ export default function ReturnDetailPage() {
   const [courier, setCourier] = useState('');
   const [inventoryData, setInventoryData] = useState(null);   // null = not loaded
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [policy, setPolicy] = useState(null);
+  const [policyLoading, setPolicyLoading] = useState(false);
   const { toasts, addToast, addConfirmToast, removeToast } = useToast();
 
   async function loadReturn() {
@@ -45,7 +47,16 @@ export default function ReturnDetailPage() {
       setRet(res.data);
     } catch { setRet(null); } finally { setLoading(false); }
   }
-  useEffect(() => { loadReturn(); }, [id]);
+
+  async function loadPolicy() {
+    setPolicyLoading(true);
+    try {
+      const res = await api.get(`/returns/${id}/policy-check`);
+      setPolicy(res.data);
+    } catch { setPolicy(null); } finally { setPolicyLoading(false); }
+  }
+
+  useEffect(() => { loadReturn(); loadPolicy(); }, [id]);
 
   async function updateStatus(newStatus) {
     setActionLoading(newStatus);
@@ -60,6 +71,7 @@ export default function ReturnDetailPage() {
         addToast(`Status → ${newStatus}`);
       }
       await loadReturn();
+      await loadPolicy();
     } catch (err) {
       addToast(err.response?.data?.detail || 'Failed', 'error');
     } finally { setActionLoading(''); }
@@ -313,6 +325,80 @@ export default function ReturnDetailPage() {
 
         {/* Right sidebar */}
         <div className="space-y-4">
+
+          {/* Policy Check */}
+          <div className="card p-4">
+            <h2 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <span>Policy Check</span>
+            </h2>
+            {policyLoading ? (
+              <div className="flex justify-center py-3">
+                <div className="w-4 h-4 border-2 border-gray-200 border-t-brand-600 rounded-full animate-spin" />
+              </div>
+            ) : policy ? (
+              <div className="space-y-2.5 text-sm">
+
+                {/* 1. Return window */}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-600 leading-tight">
+                    Within return window ({policy.return_window.days} days)
+                    {policy.return_window.days_since_baseline != null && (
+                      <span className="block text-xs text-gray-400">
+                        Day {policy.return_window.days_since_baseline} since {policy.return_window.baseline === 'fulfillment' ? 'fulfillment' : 'order placed'}
+                      </span>
+                    )}
+                  </span>
+                  {policy.return_window.pass === null ? (
+                    <span className="badge bg-gray-100 text-gray-500 text-xs shrink-0">N/A</span>
+                  ) : policy.return_window.pass ? (
+                    <span className="badge bg-green-100 text-green-700 text-xs font-semibold shrink-0">Pass</span>
+                  ) : (
+                    <span className="badge bg-red-100 text-red-700 text-xs font-semibold shrink-0">Fail</span>
+                  )}
+                </div>
+
+                {/* 2. Reason eligibility */}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-600 leading-tight">
+                    Reason — {ret.reason?.replace(/_/g, ' ')}
+                    <span className="block text-xs text-gray-400">{policy.reason_eligibility.label}</span>
+                  </span>
+                  {policy.reason_eligibility.status === 'eligible' ? (
+                    <span className="badge bg-green-100 text-green-700 text-xs font-semibold shrink-0">Eligible</span>
+                  ) : policy.reason_eligibility.status === 'not_eligible' ? (
+                    <span className="badge bg-red-100 text-red-700 text-xs font-semibold shrink-0">Not Eligible</span>
+                  ) : (
+                    <span className="badge bg-yellow-100 text-yellow-700 text-xs font-semibold shrink-0">Review</span>
+                  )}
+                </div>
+
+                {/* 3. Return pickup initiated */}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-600 leading-tight">
+                    Return pickup initiated
+                    <span className="block text-xs text-gray-400 capitalize">{policy.pickup_initiated.current_status}</span>
+                  </span>
+                  {policy.pickup_initiated.pass ? (
+                    <span className="badge bg-green-100 text-green-700 text-xs font-semibold shrink-0">Pass</span>
+                  ) : (
+                    <span className="badge bg-orange-100 text-orange-700 text-xs font-semibold shrink-0">Pending</span>
+                  )}
+                </div>
+
+                {/* 4. Customer return history */}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-600 leading-tight">Customer return history</span>
+                  <span className="badge bg-gray-100 text-gray-600 text-xs shrink-0">
+                    {policy.prior_returns.count} prior {policy.prior_returns.count === 1 ? 'return' : 'returns'}
+                  </span>
+                </div>
+
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">Policy check unavailable.</p>
+            )}
+          </div>
+
           {/* Tracking input (shown after approval, before tracking is added) */}
           {needsTracking && (
             <div className="card p-4 space-y-3">

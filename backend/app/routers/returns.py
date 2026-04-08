@@ -13,6 +13,17 @@ from app.models.return_request import (
 
 router = APIRouter(prefix="/returns", tags=["Returns"])
 
+RETURN_WINDOW_DAYS = 7        # single source of truth for return window
+REPLACEMENT_WINDOW_DAYS = 7   # replacement eligibility window
+REFUND_WINDOW_DAYS = 7        # refund eligibility window
+
+WINDOW_DAYS_BY_TYPE = {
+    "return": RETURN_WINDOW_DAYS,
+    "replace": REPLACEMENT_WINDOW_DAYS,
+    "replacement": REPLACEMENT_WINDOW_DAYS,
+    "refund": REFUND_WINDOW_DAYS,
+}
+
 VALID_TRANSITIONS = {
     "requested": ["approved", "rejected"],
     "approved": ["shipped", "rejected", "cancelled"],
@@ -123,6 +134,205 @@ async def check_return_inventory(return_id: str, agent=Depends(get_current_agent
         results.append(entry)
 
     return {"items": results}
+
+
+# ─── ORDER-LEVEL POLICY CHECK (no return record required) ───
+@router.get("/order/{order_id}/policy-check")
+async def order_policy_check(
+    order_id: str,
+    ticket_type: str = Query(None, description="Ticket type: return, replace, refund"),
+    customer_email: str = Query(None, description="Customer email for history lookup"),
+    agent=Depends(get_current_agent),
+):
+    """Return/replacement/refund window & payment policy for an order — works even without a return record."""
+    db = get_db()
+    window_baseline = None
+    baseline_label = None
+    financial_status = "unknown"
+    order_customer_email = customer_email
+    try:
+        order_data = await shopify_get(f"/orders/{order_id}.json")
+        order = order_data.get("order", {})
+        financial_status = order.get("financial_status", "unknown")
+        if not order_customer_email:
+            order_customer_email = order.get("email") or order.get("contact_email")
+        fulfillments = order.get("fulfillments") or []
+        if fulfillments:
+            raw = fulfillments[-1].get("created_at") or ""
+            if raw:
+                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                baseline_label = "fulfillment"
+        if not window_baseline:
+            raw = order.get("created_at") or ""
+            if raw:
+                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                baseline_label = "order_created"
+    except Exception:
+        pass
+
+    if window_baseline and window_baseline.tzinfo is None:
+        window_baseline = window_baseline.replace(tzinfo=timezone.utc)
+
+    # Use ticket-type-specific window days
+    window_days = WINDOW_DAYS_BY_TYPE.get(ticket_type, RETURN_WINDOW_DAYS)
+
+    within_window = None
+    days_since_baseline = None
+    if window_baseline:
+        now = datetime.now(timezone.utc)
+        days_since_baseline = (now - window_baseline).days
+        within_window = days_since_baseline <= window_days
+
+    # ── Customer ticket history by type ──────────────────────────────────────
+    prior_refunds = 0
+    prior_replacements = 0
+    prior_returns = 0
+    if order_customer_email:
+        prior_refunds = await db.tickets.count_documents({
+            "customer_email": order_customer_email,
+            "ticket_type": "refund",
+            "status": "resolved",
+        })
+        prior_replacements = await db.tickets.count_documents({
+            "customer_email": order_customer_email,
+            "ticket_type": {"$in": ["replace", "replacement"]},
+            "status": "resolved",
+        })
+        prior_returns = await db.tickets.count_documents({
+            "customer_email": order_customer_email,
+            "ticket_type": "return",
+            "status": "resolved",
+        })
+
+    return {
+        "return_window": {
+            "pass": within_window,
+            "days": window_days,
+            "days_since_baseline": days_since_baseline,
+            "baseline": baseline_label,
+        },
+        "financial_status": financial_status,
+        "prior_refunds": {"count": prior_refunds},
+        "prior_replacements": {"count": prior_replacements},
+        "prior_returns": {"count": prior_returns},
+    }
+
+
+# ─── POLICY CHECK ───
+@router.get("/{return_id}/policy-check")
+async def return_policy_check(return_id: str, agent=Depends(get_current_agent)):
+    """Evaluate return eligibility policy checks for a given return request."""
+    db = get_db()
+    ret = await db.returns.find_one({"id": return_id})
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+
+    # ── 1. Return window (7 days from fulfillment date, fallback to order created_at) ──
+    window_baseline = None
+    baseline_label = None
+    try:
+        order_data = await shopify_get(f"/orders/{ret['order_id']}.json")
+        order = order_data.get("order", {})
+        fulfillments = order.get("fulfillments") or []
+        if fulfillments:
+            raw = fulfillments[-1].get("created_at") or ""
+            if raw:
+                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                baseline_label = "fulfillment"
+        if not window_baseline:
+            raw = order.get("created_at") or ""
+            if raw:
+                window_baseline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                baseline_label = "order_created"
+    except Exception:
+        pass
+
+    return_requested_at = ret.get("created_at")
+    if isinstance(return_requested_at, str):
+        return_requested_at = datetime.fromisoformat(return_requested_at.replace("Z", "+00:00"))
+    if return_requested_at and return_requested_at.tzinfo is None:
+        return_requested_at = return_requested_at.replace(tzinfo=timezone.utc)
+    if window_baseline and window_baseline.tzinfo is None:
+        window_baseline = window_baseline.replace(tzinfo=timezone.utc)
+
+    within_window = None
+    days_since_baseline = None
+    if window_baseline:
+        # Use current time so remaining days decrease daily (not frozen at filing date)
+        now = datetime.now(timezone.utc)
+        days_since_baseline = (now - window_baseline).days
+        within_window = days_since_baseline <= RETURN_WINDOW_DAYS
+
+    # ── 2. Reason eligibility ────────────────────────────────────────────────
+    SELLER_ERROR_REASONS = {"wrong_item", "defective", "size_issue", "damaged_in_shipping", "not_as_described"}
+    INELIGIBLE_REASONS = {"changed_mind"}
+    reason = ret.get("reason", "")
+    if reason in SELLER_ERROR_REASONS:
+        reason_status = "eligible"
+        reason_label = "Seller error"
+    elif reason in INELIGIBLE_REASONS:
+        reason_status = "not_eligible"
+        reason_label = "Customer decision"
+    else:
+        reason_status = "review"
+        reason_label = "Review required"
+
+    # ── 3. Return pickup initiated ───────────────────────────────────────────
+    PICKUP_INITIATED_STATUSES = {"shipped", "received", "resolved"}
+    pickup_initiated = ret.get("status") in PICKUP_INITIATED_STATUSES
+
+    # ── 4. Customer return history (all non-cancelled returns, excluding this one) ──
+    customer_email = ret.get("customer_email")
+    prior_count = await db.returns.count_documents({
+        "customer_email": customer_email,
+        "id": {"$ne": ret.get("id")},
+        "status": {"$nin": ["cancelled"]},
+    })
+
+    # ── 5. Customer ticket history by type (resolved tickets) ──
+    prior_refunds = 0
+    prior_replacements = 0
+    prior_returns_tickets = 0
+    if customer_email:
+        prior_refunds = await db.tickets.count_documents({
+            "customer_email": customer_email,
+            "ticket_type": "refund",
+            "status": "resolved",
+        })
+        prior_replacements = await db.tickets.count_documents({
+            "customer_email": customer_email,
+            "ticket_type": {"$in": ["replace", "replacement"]},
+            "status": "resolved",
+        })
+        prior_returns_tickets = await db.tickets.count_documents({
+            "customer_email": customer_email,
+            "ticket_type": "return",
+            "status": "resolved",
+        })
+
+    return {
+        "return_window": {
+            "pass": within_window,
+            "days": RETURN_WINDOW_DAYS,
+            "days_since_baseline": days_since_baseline,
+            "baseline": baseline_label,
+        },
+        "reason_eligibility": {
+            "status": reason_status,
+            "reason": reason,
+            "label": reason_label,
+        },
+        "pickup_initiated": {
+            "pass": pickup_initiated,
+            "current_status": ret.get("status"),
+        },
+        "prior_returns": {
+            "count": prior_count,
+        },
+        "prior_refunds": {"count": prior_refunds},
+        "prior_replacements": {"count": prior_replacements},
+        "prior_returns_tickets": {"count": prior_returns_tickets},
+    }
 
 
 # ─── GET ONE ───

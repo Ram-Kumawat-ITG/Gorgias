@@ -2,7 +2,7 @@
 // Design matches reference HTML files: header, summary, metrics, timeline, inventory, policy, actions
 import { useState, useEffect, useRef, useCallback } from 'react'
 import clsx from 'clsx'
-import { ordersApi, shopifyApi } from '../api/client'
+import { ordersApi, shopifyApi, returnsApi, ticketsApi } from '../api/client'
 
 // ── ProductSelectorInput (exported — used in action forms) ────────────────────
 export function ProductSelectorInput({ value, onTextChange, onSelect }) {
@@ -117,8 +117,6 @@ const ACTION_ICONS = {
   change_address: '📍', track_order: '📦', refund_order: '💰', contact_support: '📞',
 }
 
-const RETURN_WINDOW_DAYS = 30
-
 const TICKET_TYPE_LABEL = {
   refund: 'Refund Request',
   return: 'Return Request',
@@ -134,35 +132,68 @@ const TICKET_TYPE_LABEL = {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function orderAgeDays(shopifyOrder) {
-  if (!shopifyOrder?.created_at) return null
-  return Math.floor((Date.now() - new Date(shopifyOrder.created_at).getTime()) / (1000 * 60 * 60 * 24))
-}
-
-function daysLeftInWindow(shopifyOrder) {
-  const age = orderAgeDays(shopifyOrder)
-  if (age === null) return null
-  return Math.max(0, RETURN_WINDOW_DAYS - age)
-}
-
-function computePolicies(shopifyOrder, selectedTicket) {
+function computePolicies(shopifyOrder, selectedTicket, returnPolicyData = null) {
   if (!shopifyOrder) return []
-  const age = orderAgeDays(shopifyOrder)
-  const daysLeft = daysLeftInWindow(shopifyOrder)
   const isCancelled = !!shopifyOrder.cancelled_at
   const isPaid = shopifyOrder.financial_status === 'paid'
   const isRefunded = ['refunded', 'partially_refunded'].includes(shopifyOrder.financial_status)
   const isUnfulfilled = !shopifyOrder.fulfillment_status || shopifyOrder.fulfillment_status === 'unfulfilled'
 
-  const policies = [
-    {
-      label: `Within return window (${RETURN_WINDOW_DAYS} days)`,
-      pass: age !== null && age <= RETURN_WINDOW_DAYS,
+  const policies = []
+
+  // ── Window check — label adapts to ticket type ──
+  const ticketType = selectedTicket?.ticket_type || selectedTicket?.pending_action_type
+  const windowLabel = ticketType === 'replace' || ticketType === 'replacement'
+    ? 'Replacement window'
+    : ticketType === 'refund'
+      ? 'Refund window'
+      : 'Return window'
+
+  if (returnPolicyData?.return_window) {
+    const rw = returnPolicyData.return_window
+    const daysRemaining = Math.max(0, rw.days - (rw.days_since_baseline ?? rw.days))
+    policies.push({
+      label: `Within ${windowLabel.toLowerCase()} (${rw.days} days)`,
+      pass: rw.pass === true,
       warn: false,
-      detail: age !== null
-        ? daysLeft > 0 ? `${daysLeft} days left` : 'Expired'
-        : 'Unknown order date',
-    },
+      detail: rw.pass === null ? 'N/A'
+        : rw.pass ? `${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} left`
+        : 'Expired',
+    })
+  } else {
+    // Fallback only while backend data is loading — no hardcoded window
+    policies.push({
+      label: windowLabel,
+      pass: false,
+      warn: true,
+      detail: 'Loading policy…',
+    })
+  }
+
+  // ── Reason eligibility (backend only — shown for return tickets) ──
+  if (returnPolicyData?.reason_eligibility) {
+    const re = returnPolicyData.reason_eligibility
+    policies.push({
+      label: `Reason — ${(re.reason || '').replace(/_/g, ' ')}`,
+      pass: re.status === 'eligible',
+      warn: re.status === 'review',
+      detail: re.label || re.status,
+    })
+  }
+
+  // ── Return pickup initiated (backend only) ──
+  if (returnPolicyData?.pickup_initiated) {
+    const pi = returnPolicyData.pickup_initiated
+    policies.push({
+      label: 'Return pickup initiated',
+      pass: pi.pass,
+      warn: !pi.pass,
+      detail: pi.current_status || (pi.pass ? 'Yes' : 'Pending'),
+    })
+  }
+
+  // ── Order-level checks (always shown) ──
+  policies.push(
     {
       label: isPaid ? 'Payment confirmed' : 'Payment status',
       pass: isPaid,
@@ -187,8 +218,49 @@ function computePolicies(shopifyOrder, selectedTicket) {
       warn: !isCancelled && !isUnfulfilled,
       detail: isCancelled ? 'Already cancelled' : isUnfulfilled ? 'Unfulfilled — can cancel' : 'Fulfilled — cannot cancel',
     },
-  ]
+  )
 
+  // ── Customer history — show relevant count based on ticket type ──
+  const isReplace = ticketType === 'replace' || ticketType === 'replacement'
+  const isRefund = ticketType === 'refund'
+  const isReturn = ticketType === 'return'
+
+  if (isReplace && returnPolicyData?.prior_replacements != null) {
+    const count = returnPolicyData.prior_replacements.count
+    policies.push({
+      label: 'Customer replacement history',
+      pass: count === 0,
+      warn: count > 0 && count <= 2,
+      detail: count === 0 ? 'No prior replacements' : `${count} prior replacement${count !== 1 ? 's' : ''}`,
+    })
+  } else if (isRefund && returnPolicyData?.prior_refunds != null) {
+    const count = returnPolicyData.prior_refunds.count
+    policies.push({
+      label: 'Customer refund history',
+      pass: count === 0,
+      warn: count > 0 && count <= 2,
+      detail: count === 0 ? 'No prior refunds' : `${count} prior refund${count !== 1 ? 's' : ''}`,
+    })
+  } else if (isReturn && (returnPolicyData?.prior_returns_tickets != null || returnPolicyData?.prior_returns != null)) {
+    const count = returnPolicyData.prior_returns_tickets?.count ?? returnPolicyData.prior_returns?.count ?? 0
+    policies.push({
+      label: 'Customer return history',
+      pass: count === 0,
+      warn: count > 0 && count <= 2,
+      detail: count === 0 ? 'No prior returns' : `${count} prior return${count !== 1 ? 's' : ''}`,
+    })
+  } else if (returnPolicyData?.prior_returns != null) {
+    // Fallback for other ticket types — show general return history
+    const count = returnPolicyData.prior_returns.count
+    policies.push({
+      label: 'Customer return history',
+      pass: count === 0,
+      warn: count > 0 && count <= 2,
+      detail: count === 0 ? 'No prior returns' : `${count} prior return${count !== 1 ? 's' : ''}`,
+    })
+  }
+
+  // ── WhatsApp 24h window ──
   if (selectedTicket?.channel === 'whatsapp' && selectedTicket?.whatsapp_last_customer_msg_at) {
     const hoursAgo = (Date.now() - new Date(selectedTicket.whatsapp_last_customer_msg_at).getTime()) / (1000 * 60 * 60)
     const within = hoursAgo < 24
@@ -365,6 +437,7 @@ function ActionPanel({ action, index, actionResult, executeAction, getFieldValue
 
 // ── Quick action configs ───────────────────────────────────────────────────────
 function getQuickActions(selectedTicket, shopifyOrder) {
+  const isPaymentPending = shopifyOrder?.financial_status === 'pending'
   const ticketType = selectedTicket?.ticket_type
   const pendingType = selectedTicket?.pending_action_type
   const id = selectedTicket?.id?.slice(-6).toUpperCase() || '—'
@@ -379,11 +452,12 @@ function getQuickActions(selectedTicket, shopifyOrder) {
   const subjectIsReturn = !subjectIsReplace && subject.includes('return')
 
   const isReplace = ticketType === 'replace' || pendingType === 'replace' || subjectIsReplace
+
   const isRefundReturn = !isReplace && (
     ['return', 'refund', 'cancel_requested', 'cancel'].includes(ticketType)
     || subjectIsRefund || subjectIsReturn
   )
-
+  
   if (isReplace) {
     return {
       type: 'replace',
@@ -401,6 +475,7 @@ function getQuickActions(selectedTicket, shopifyOrder) {
     return {
       type: 'refund',
       enabled: true,
+      paymentPending: isPaymentPending,
       currency,
       amount,
       buttons: [
@@ -453,8 +528,12 @@ export default function AiBanner({
   approveAction,
   onClear,
 }) {
+  // ── Backend return policy state (must be declared before use in computePolicies) ──
+  const [returnPolicyData, setReturnPolicyData] = useState(null)
+  const [returnPolicyLoading, setReturnPolicyLoading] = useState(false)
+
   const isWhatsApp = selectedTicket?.channel === 'whatsapp'
-  const policies = computePolicies(shopifyOrder, selectedTicket)
+  const policies = computePolicies(shopifyOrder, selectedTicket, returnPolicyData)
   const timeline = buildTimeline(shopifyOrder)
 
   // ── Quick-action local state ──────────────────────────────────────────────
@@ -484,6 +563,46 @@ export default function AiBanner({
   const [replacementLoading, setReplacementLoading] = useState(false)
   const [replacementSuccess, setReplacementSuccess] = useState(null)   // new order name e.g. "#1749"
   const [replacementError, setReplacementError] = useState(null)
+
+  useEffect(() => {
+    const RETURN_TICKET_TYPES = ['return', 'refund', 'replacement', 'replace', 'cancel', 'cancel_requested']
+    if (!shopifyOrder?.id || !RETURN_TICKET_TYPES.includes(selectedTicket?.ticket_type)) {
+      setReturnPolicyData(null)
+      return
+    }
+    let cancelled = false
+    setReturnPolicyLoading(true)
+    returnsApi.listByOrder(shopifyOrder.id)
+      .then(async res => {
+        const returns = res.data || []
+        if (cancelled) return
+        if (returns.length) {
+          // Full policy check when a return record exists
+          const policyRes = await returnsApi.policyCheck(returns[0].id)
+          if (!cancelled) setReturnPolicyData(policyRes.data)
+        } else {
+          // Order-level policy check (return/replacement/refund window + payment status)
+          const policyRes = await returnsApi.orderPolicyCheck(shopifyOrder.id, {
+            ticket_type: selectedTicket?.ticket_type || undefined,
+            customer_email: selectedTicket?.customer_email || undefined,
+          })
+          if (!cancelled) setReturnPolicyData(policyRes.data)
+        }
+      })
+      .catch(() => { if (!cancelled) setReturnPolicyData(null) })
+      .finally(() => { if (!cancelled) setReturnPolicyLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedTicket?.id, shopifyOrder?.id])
+
+  // ── Auto-resolve ticket after successful action ───────────────────────────
+  async function resolveTicket() {
+    if (!selectedTicket?.id) return
+    try {
+      await ticketsApi.update(selectedTicket.id, { status: 'resolved' })
+    } catch (err) {
+      console.error('[AiBanner] Failed to resolve ticket:', err)
+    }
+  }
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -518,6 +637,7 @@ export default function AiBanner({
       })
       const newOrderName = res.data?.name || res.data?.order_number ? `#${res.data.order_number}` : 'created'
       setReplacementSuccess(`Replacement order ${newOrderName} created — ready to fulfill`)
+      await resolveTicket()
       if (sendPrompt && qa?.buttons?.find(b => b.id === 'approve')?.prompt) {
         sendPrompt(qa.buttons.find(b => b.id === 'approve').prompt)
       }
@@ -532,6 +652,7 @@ export default function AiBanner({
   // ── Full refund handler ───────────────────────────────────────────────────
   async function handleFullRefund(qa) {
     if (!shopifyOrder?.id || refundLoading || refundSuccess) return
+    if (shopifyOrder.financial_status === 'pending') { setRefundError('Cannot refund — payment is still pending'); return }
     setRefundLoading(true)
     setRefundError(null)
     try {
@@ -545,6 +666,7 @@ export default function AiBanner({
         notify: true,
       })
       setRefundSuccess(`Refund of ${qa.currency}${qa.amount} processed successfully`)
+      await resolveTicket()
       if (sendPrompt) sendPrompt(`Ticket #${selectedTicket?.id?.slice(-6).toUpperCase()} ke liye full refund ${qa.currency}${qa.amount} process ho gaya hai`)
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || 'Refund failed'
@@ -560,6 +682,7 @@ export default function AiBanner({
     const max = parseFloat(qa?.amount || '0')
     if (!amt || amt <= 0 || amt > max) { setPartialError(`Enter an amount between ${qa?.currency}1 and ${qa?.currency}${max}`); return }
     if (!shopifyOrder?.id) { setPartialError('Order not loaded'); return }
+    if (shopifyOrder.financial_status === 'pending') { setPartialError('Cannot refund — payment is still pending'); return }
     setPartialLoading(true)
     setPartialError(null)
     try {
@@ -569,6 +692,7 @@ export default function AiBanner({
         notify: true,
       })
       setPartialSuccess(`Partial refund of ${qa?.currency}${partialAmount} processed`)
+      await resolveTicket()
       if (sendPrompt) sendPrompt(`Ticket #${selectedTicket?.id?.slice(-6).toUpperCase()} ke liye partial refund ${qa?.currency}${partialAmount} process ho gaya hai`)
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || 'Refund failed'
@@ -630,6 +754,7 @@ export default function AiBanner({
       })
 
       setExchangeSuccess(`Exchange initiated: ${oldVariantTitle} → ${newVariantTitle}`)
+      await resolveTicket()
       if (sendPrompt) sendPrompt(`Ticket #${selectedTicket?.id?.slice(-6).toUpperCase()} ke liye exchange process ho raha hai — ${oldVariantTitle} se ${newVariantTitle}`)
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || 'Exchange failed'
@@ -638,7 +763,9 @@ export default function AiBanner({
       setExchangeLoading(false)
     }
   }
-  const daysLeft = daysLeftInWindow(shopifyOrder)
+  // Dynamic return window from backend policy data
+  const rw = returnPolicyData?.return_window
+  const daysLeft = rw ? Math.max(0, rw.days - (rw.days_since_baseline ?? rw.days)) : null
   const topConfidence = aiResult?.actions?.length
     ? Math.max(...aiResult.actions.map(a => a.confidence || 0))
     : null
@@ -777,7 +904,13 @@ export default function AiBanner({
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-gray-500 mb-1">Return window</p>
+                <p className="text-xs text-gray-500 mb-1">
+                  {selectedTicket?.ticket_type === 'replace' || selectedTicket?.pending_action_type === 'replace'
+                    ? 'Replacement window'
+                    : selectedTicket?.ticket_type === 'refund'
+                      ? 'Refund window'
+                      : 'Return window'}
+                </p>
                 <p className={clsx('text-sm font-semibold mt-0.5',
                   daysLeft === null ? 'text-gray-400' :
                     daysLeft > 7 ? 'text-green-600' :
@@ -899,18 +1032,25 @@ export default function AiBanner({
           )}
 
           {/* ── Policy eligibility checks ───────────────────────────────────────── */}
-          {policies.length > 0 && (
+          {(policies.length > 0 || returnPolicyLoading) && (
             <Card title="Policy eligibility checks">
-              <div className="space-y-0 divide-y divide-gray-50">
-                {policies.map((p, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
-                    <span className="text-xs text-gray-700">{p.label}</span>
-                    <PolicyBadge pass={p.pass} warn={p.warn} detail={
-                      p.pass ? (p.detail || 'Pass') : p.warn ? (p.detail || 'Warning') : (p.detail || 'Fail')
-                    } />
-                  </div>
-                ))}
-              </div>
+              {returnPolicyLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 py-1">
+                  <div className="w-3.5 h-3.5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
+                  Loading policy from server…
+                </div>
+              ) : (
+                <div className="space-y-0 divide-y divide-gray-50">
+                  {policies.map((p, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+                      <span className="text-xs text-gray-700">{p.label}</span>
+                      <PolicyBadge pass={p.pass} warn={p.warn} detail={
+                        p.pass ? (p.detail || 'Pass') : p.warn ? (p.detail || 'Warning') : (p.detail || 'Fail')
+                      } />
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           )}
 
@@ -922,6 +1062,7 @@ export default function AiBanner({
 
             function handleButtonClick(btn) {
               if (!qa.enabled) return
+              if (qa.paymentPending && ['full_refund', 'partial_refund'].includes(btn.id)) return
               if (btn.id === 'full_refund') { handleFullRefund(qa); return }
               if (btn.id === 'partial_refund') { setPartialAmount(''); setPartialReason(''); setPartialError(null); setPartialSuccess(null); setShowPartialModal(true); return }
               if (btn.id === 'exchange') { openExchangePanel(); return }
@@ -935,6 +1076,12 @@ export default function AiBanner({
                 {/* Disabled hint */}
                 {!qa.enabled && (
                   <p className="text-xs text-gray-400 mb-3 italic">Awaiting request classification — run AI analysis to enable actions</p>
+                )}
+                {qa.paymentPending && (
+                  <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Payment pending — Refund &amp; Partial Refund are disabled until payment is completed
+                  </div>
                 )}
 
                 {/* Replacement success/error banners */}
@@ -970,8 +1117,10 @@ export default function AiBanner({
                     const isFullRefund = btn.id === 'full_refund'
                     const isApprove = btn.id === 'approve'
                     const btnDisabled = isDisabled
+                      || (['full_refund', 'partial_refund'].includes(btn.id) && qa.paymentPending)
                       || (isFullRefund && (refundLoading || !!refundSuccess))
                       || (isApprove && (replacementLoading || !!replacementSuccess))
+                      
                     return (
                       <button
                         key={btn.id}

@@ -28,7 +28,7 @@ export default function CustomerSidebar({ ticket }) {
           setCustomer(null);
           setOrders([]);
           return;
-        }
+        }  
         // Step 2: fetch full profile (includes orders + ticket stats)
         const profile = await api.get(`/customers/${customers[0].id}`);
         setCustomer(profile.data.customer);

@@ -577,10 +577,12 @@ export default function RequestPage() {
       let extraData = {}   // extra payload attached to the result (e.g. trackingData)
 
       const mid = selectedTicket?.merchant_id || null
+      const resolveTicketId = selectedTicket?.id || null
+
       if (action.type === 'CANCEL_ORDER') {
         const id = merged.shopify_order_id || merged.order_id || ticketOrderId
         if (!id) throw new Error('Order ID is required. It has been auto-filled if available — check the field above.')
-        await ordersApi.cancel(id, { reason: merged.reason || 'other', restock: true, email: false, merchant_id: mid })
+        await ordersApi.cancel(id, { reason: merged.reason || 'other', restock: true, email: false, merchant_id: mid, ticket_id: resolveTicketId })
         successMsg = `Order #${merged.order_number || id} cancelled successfully.`
 
       } else if (action.type === 'REFUND_ORDER') {
@@ -591,6 +593,7 @@ export default function RequestPage() {
           note: merged.reason || '',
           notify: true,
           merchant_id: mid,
+          ticket_id: resolveTicketId,
         })
         successMsg = `Refund of $${merged.refund_amount || '(full)'} issued for order #${merged.order_number || id}.`
 
@@ -646,7 +649,7 @@ export default function RequestPage() {
         const id = merged.order_id || ticketOrderId || merged.shopify_order_id
         if (!id) throw new Error('Order ID is required — enter the Shopify order ID above')
         // Shopify does not allow deleting confirmed orders — cancel instead
-        await ordersApi.cancel(id, { reason: 'other', restock: true, email: false, merchant_id: mid })
+        await ordersApi.cancel(id, { reason: 'other', restock: true, email: false, merchant_id: mid, ticket_id: resolveTicketId })
         successMsg = `Order #${merged.order_number || id} cancelled and restocked.`
 
       } else if (action.type === 'UPDATE_CUSTOMER_ADDRESS' || action.type === 'UPDATE_CUSTOMER_DETAILS') {
@@ -676,6 +679,17 @@ export default function RequestPage() {
       }
 
       setActionResult(prev => ({ ...prev, [actionIndex]: { loading: false, error: null, success: successMsg, ...extraData } }))
+
+      // Refresh ticket state for final actions so the status badge updates immediately
+      const RESOLVE_ACTIONS = ['CANCEL_ORDER', 'REFUND_ORDER', 'DELETE_ORDER']
+      if (RESOLVE_ACTIONS.includes(action.type) && selectedTicket?.id) {
+        try {
+          const res = await ticketsApi.get(selectedTicket.id)
+          if (res.data) setSelectedTicket(res.data)
+        } catch {
+          // non-critical — status will reflect on next navigation
+        }
+      }
     } catch (err) {
       const raw = err.response?.data?.detail || err.message || 'Action failed'
       // Make Shopify API errors readable

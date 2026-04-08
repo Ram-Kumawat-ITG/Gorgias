@@ -88,4 +88,12 @@ export const slaPoliciesApi = {
   applyRetroactive:  () => api.post('/sla-policies/apply-retroactive'),
 }
 
+export const returnsApi = {
+  listByOrder:       (orderId)   => api.get(`/returns/order/${orderId}`),
+  policyCheck:       (returnId)  => api.get(`/returns/${returnId}/policy-check`),
+  orderPolicyCheck:  (orderId, params) => api.get(`/returns/order/${orderId}/policy-check`, { params }),
+  list:              (params)    => api.get('/returns', { params }),
+  get:               (id)        => api.get(`/returns/${id}`),
+}
+
 export default api;

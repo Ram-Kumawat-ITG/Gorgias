@@ -59,6 +59,14 @@ TICKET_TYPE_KEYWORDS = {
         "kaam nahi kar raha", "problem aa rahi hai", "error aa raha hai", "login nahi ho raha",
         "password bhul gaya", "account band", "app crash", "nahi chal raha", "issue aa raha",
     ],
+    "replacement": [
+        # English
+        "replacement", "replace", "damaged", "defective", "faulty", "broken product", "not working product",
+        "send replacement", "wrong item", "wrong product", "missing item", "incomplete order",
+        # Hindi/Urdu
+        "replacement chahiye", "replace karo", "tuta hua", "kharab product", "defective product",
+        "galat item aaya", "galat product aaya", "item missing", "naya bhejo", "badal do",
+    ],
 }
 
 
@@ -142,7 +150,7 @@ async def apply_sla_policy(ticket_doc: dict) -> dict:
     return ticket_doc
 
 
-async def create_ticket_from_email(customer_email: str, subject: str, body: str, merchant_id: str = None) -> dict:
+async def create_ticket_from_email(customer_email: str, subject: str, body: str, merchant_id: str = None, tags: list = None) -> dict:
     db = get_db()
     customer = await fetch_and_sync_customer(customer_email)
 
@@ -189,6 +197,7 @@ async def create_ticket_from_email(customer_email: str, subject: str, body: str,
         assignee_id=admin_id,
         shopify_order_id=order_snapshot.get("shopify_order_id") or None,
         shopify_order_number=str(order_snapshot["order_number"]) if order_snapshot.get("order_number") else None,
+        tags=tags or [],
     )
     ticket_doc = ticket.model_dump()
     ticket_doc = await apply_sla_policy(ticket_doc)

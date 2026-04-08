@@ -12,10 +12,14 @@ async def send_reply_email(to: str, subject: str, body: str, ticket_id: str):
     if ticket and ticket.get("merchant_id"):
         merchant = await db.merchants.find_one({"id": ticket["merchant_id"]})
 
-    # Use merchant config if available, else fall back to global .env config
+    # Use merchant config if available and not a placeholder, else fall back to global .env config
+    _PLACEHOLDER_DOMAINS = {"placeholder.mailgun.org", ""}
     if merchant:
         api_key = merchant.get("mailgun_api_key", "")
         domain = merchant.get("mailgun_domain", "")
+        if not api_key or domain in _PLACEHOLDER_DOMAINS:
+            api_key = settings.mailgun_api_key
+            domain = settings.mailgun_domain
     else:
         api_key = settings.mailgun_api_key
         domain = settings.mailgun_domain
@@ -52,9 +56,13 @@ async def send_gift_card_email(to: str, subject: str, html: str, text_fallback: 
     if ticket and ticket.get("merchant_id"):
         merchant = await db.merchants.find_one({"id": ticket["merchant_id"]})
 
+    _PLACEHOLDER_DOMAINS = {"placeholder.mailgun.org", ""}
     if merchant:
         api_key = merchant.get("mailgun_api_key", "")
         domain = merchant.get("mailgun_domain", "")
+        if not api_key or domain in _PLACEHOLDER_DOMAINS:
+            api_key = settings.mailgun_api_key
+            domain = settings.mailgun_domain
     else:
         api_key = settings.mailgun_api_key
         domain = settings.mailgun_domain

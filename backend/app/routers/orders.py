@@ -1,11 +1,13 @@
 # Orders router — complete draft order + regular order management via Shopify API
 import asyncio
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.routers.auth import get_current_agent
 from app.services.shopify_client import (
     shopify_get, shopify_post, shopify_put, shopify_delete, ShopifyAPIError,
 )
 from app.services.merchant_shopify import get_shopify_creds
+from app.database import get_db
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -37,6 +39,7 @@ class CancelPayload(BaseModel):
     restock: bool = True
     email: bool = False
     merchant_id: Optional[str] = None
+    ticket_id: Optional[str] = None  # if set, ticket is auto-resolved on success
 
 
 class RefundLineItem(BaseModel):
@@ -52,6 +55,7 @@ class RefundPayload(BaseModel):
     note: Optional[str] = None
     notify: bool = True
     merchant_id: Optional[str] = None
+    ticket_id: Optional[str] = None  # if set, ticket is auto-resolved on success
 
 
 class FulfillPayload(BaseModel):
@@ -389,6 +393,37 @@ async def update_order(order_id: str, data: OrderUpdatePayload, agent=Depends(ge
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
+async def _auto_resolve_ticket(ticket_id: Optional[str] = None, order_id: Optional[str] = None) -> None:
+    """Update ticket status to resolved after a successful final action.
+
+    Resolution is attempted in two ways:
+      1. By ticket_id (exact match) if provided.
+      2. By shopify_order_id (fallback) — catches refunds done from OrderDetailPage
+         or any context where ticket_id wasn't explicitly passed.
+
+    The $nin guard makes this idempotent — already-resolved/closed tickets are skipped.
+    """
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    update = {"$set": {"status": "resolved", "resolved_at": now, "updated_at": now}}
+
+    if ticket_id:
+        result = await db.tickets.update_one(
+            {"id": ticket_id, "status": {"$nin": ["resolved", "closed"]}},
+            update,
+        )
+        print(f"[auto_resolve] ticket_id={ticket_id} matched={result.matched_count} modified={result.modified_count}")
+        if result.modified_count:
+            return  # done — no need for the order fallback
+
+    if order_id:
+        result = await db.tickets.update_many(
+            {"shopify_order_id": str(order_id), "status": {"$nin": ["resolved", "closed"]}},
+            update,
+        )
+        print(f"[auto_resolve] order_id={order_id} matched={result.matched_count} modified={result.modified_count}")
+
+
 @router.post("/{order_id}/cancel")
 async def cancel_order(order_id: str, data: CancelPayload, agent=Depends(get_current_agent)):
     store_domain, access_token = await get_shopify_creds(data.merchant_id)
@@ -396,6 +431,10 @@ async def cancel_order(order_id: str, data: CancelPayload, agent=Depends(get_cur
         payload = {"reason": data.reason, "restock": data.restock, "email": data.email}
         result = await shopify_post(f"/orders/{order_id}/cancel.json", payload,
                                     store_domain=store_domain, access_token=access_token)
+        try:
+            await _auto_resolve_ticket(ticket_id=data.ticket_id, order_id=order_id)
+        except Exception as e:
+            print(f"[auto_resolve] cancel error: {e}")
         return _format_order(result.get("order", {}))
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -406,6 +445,13 @@ async def cancel_order(order_id: str, data: CancelPayload, agent=Depends(get_cur
 async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_current_agent)):
     store_domain, access_token = await get_shopify_creds(data.merchant_id)
     creds = dict(store_domain=store_domain, access_token=access_token)
+
+    # Block refunds when payment is still pending
+    order_data = await shopify_get(f"/orders/{order_id}.json", **creds)
+    financial_status = order_data.get("order", {}).get("financial_status", "")
+    if financial_status == "pending":
+        raise HTTPException(status_code=400, detail="Cannot process refund — payment is still pending")
+
     try:
         refund_payload = {"refund": {"notify": data.notify}}
         if data.note:
@@ -501,6 +547,10 @@ async def refund_order(order_id: str, data: RefundPayload, agent=Depends(get_cur
                 refund_payload["refund"]["transactions"] = transactions
 
         result = await shopify_post(f"/orders/{order_id}/refunds.json", refund_payload, **creds)
+        try:
+            await _auto_resolve_ticket(ticket_id=data.ticket_id, order_id=order_id)
+        except Exception as e:
+            print(f"[auto_resolve] refund error: {e}")
         return result.get("refund", {})
     except ShopifyAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

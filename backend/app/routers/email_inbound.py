@@ -54,11 +54,16 @@ async def inbound_email(request: Request):
         if merchant:
             merchant_id = merchant["id"]
 
+    # Parse tags from X-Tag header (comma-separated, e.g. "return,urgent")
+    x_tag = form.get("X-Tag") or form.get("x-tag") or ""
+    tags = [t.strip() for t in x_tag.split(",") if t.strip()]
+
     ticket = await create_ticket_from_email(
         customer_email=sender,
         subject=subject,
         body=body.strip(),
         merchant_id=merchant_id,
+        tags=tags,
     )
 
     # Auto-reply using AI agent

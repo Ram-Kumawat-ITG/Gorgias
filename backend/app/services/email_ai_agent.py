@@ -1,6 +1,7 @@
 # Email AI Agent — autonomous auto-reply for inbound emails.
 # Detects order queries, handles cancel flow, and sends conversational replies.
 import json
+from datetime import datetime, timezone
 from groq import AsyncGroq
 from app.config import settings
 from app.database import get_db
@@ -284,6 +285,19 @@ async def process_email_message(
             ai_generated=True,
         )
         await db.messages.insert_one(ai_msg.model_dump())
+
+        # Stamp first_response_at if this is the first agent/AI reply
+        now = datetime.now(timezone.utc)
+        ticket_doc = await db.tickets.find_one({"id": ticket_id})
+        if ticket_doc and not ticket_doc.get("first_response_at"):
+            await db.tickets.update_one(
+                {"id": ticket_id},
+                {"$set": {
+                    "first_response_at": now,
+                    "first_response_sla_status": "met",
+                    "updated_at": now,
+                }},
+            )
 
         return reply
 

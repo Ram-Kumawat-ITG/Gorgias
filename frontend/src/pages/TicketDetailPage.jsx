@@ -23,6 +23,7 @@ const TICKET_TYPES = [
   { value: 'billing', label: 'Billing' },
   { value: 'product_inquiry', label: 'Product Inquiry' },
   { value: 'technical', label: 'Technical' },
+  { value: 'replacement', label: 'Replacement' },
   { value: 'general', label: 'General' },
 ];
 const TYPE_COLORS = {
@@ -33,6 +34,7 @@ const TYPE_COLORS = {
   billing: 'bg-yellow-100 text-yellow-700',
   product_inquiry: 'bg-indigo-100 text-indigo-700',
   technical: 'bg-pink-100 text-pink-700',
+  replacement: 'bg-teal-100 text-teal-700',
   general: 'bg-gray-100 text-gray-600',
 };
 
