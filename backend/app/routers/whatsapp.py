@@ -481,6 +481,7 @@ async def _handle_messages(value: dict):
                         current_message=body,
                         merchant_id=merchant_id,
                         customer_name=contact_name,
+                        has_media=bool(media_id or media_url),
                     )
                     if ai_result:
                         wa_config = await get_whatsapp_config(merchant_id)

@@ -9,6 +9,7 @@ import api from '../api/client';
 import clsx from 'clsx';
 import { useToast, ToastContainer } from '../components/Toast';
 import InitiateReturnModal from '../components/InitiateReturnModal';
+import QuickActionPanel from '../components/QuickActionPanel';
 
 const FIN = {
   paid: 'bg-green-100 text-green-700', pending: 'bg-yellow-100 text-yellow-700',
@@ -33,6 +34,7 @@ export default function OrderDetailPage() {
   const { toasts, addToast, addConfirmToast, removeToast } = useToast();
 
   const [hasReturn, setHasReturn] = useState(false);
+  const [pendingTicket, setPendingTicket] = useState(null);
 
   // Modal states
   const [cancelModal, setCancelModal] = useState(false);
@@ -97,6 +99,18 @@ export default function OrderDetailPage() {
     api.get(`/returns/order/${id}`)
       .then(res => setHasReturn((res.data || []).length > 0))
       .catch(() => setHasReturn(false));
+  }, [id, isDraft]);
+
+  // Fetch pending admin action ticket for this order
+  useEffect(() => {
+    if (!id || isDraft) return;
+    api.get('/tickets', { params: { status: 'pending_admin_action', limit: 50 } })
+      .then(res => {
+        const tickets = Array.isArray(res.data) ? res.data : (res.data?.tickets || []);
+        const match = tickets.find(t => String(t.pending_action_order_id) === String(id));
+        setPendingTicket(match || null);
+      })
+      .catch(() => setPendingTicket(null));
   }, [id, isDraft]);
 
   // Fetch full customer profile once order is loaded and customer_id is known
@@ -384,6 +398,20 @@ export default function OrderDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Quick Action Panel — shown when there's a pending admin action ticket for this order */}
+      {pendingTicket && (
+        <div className="mb-6">
+          <QuickActionPanel
+            ticket={pendingTicket}
+            messages={[]}
+            onActionComplete={() => {
+              loadOrder();
+              setPendingTicket(null);
+            }}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── Left: Order details ── */}

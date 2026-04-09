@@ -27,6 +27,7 @@ _raw_origins = getattr(settings, "cors_origins", "") or ""
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()] or [
     "http://localhost:5173",
     "http://localhost:8000",
+    "https://curl-email.vercel.app",
 ]
 
 app.add_middleware(
@@ -52,8 +53,10 @@ from app.routers import (
 )
 from app.routers import media, gift_cards, external_tickets, admin_merchants
 from app.routers import chatbot_api
+from app.routers import shopify_action
 
 app.include_router(chatbot_api.router)
+app.include_router(shopify_action.router)
 app.include_router(tickets.router)
 app.include_router(customers.router)
 app.include_router(orders.router)

@@ -333,7 +333,11 @@ async def _find_product(name: str) -> dict | None:
 
 
 async def _check_inventory(product_name: str) -> str:
-    """Check stock for a product and return a pipe-delimited status string."""
+    """Check stock for a product and return a pipe-delimited status string.
+
+    Uses /inventory_levels.json (the current Shopify API) instead of the
+    deprecated inventory_quantity field on variant objects.
+    """
     try:
         result = await shopify_get("/products.json", params={"title": product_name, "limit": 5})
         products = result.get("products", [])
@@ -344,13 +348,27 @@ async def _check_inventory(product_name: str) -> str:
         title = product.get("title", product_name)
         variants = product.get("variants", [])
 
-        total_stock = sum(
-            int(v.get("inventory_quantity") or 0)
-            for v in variants
-            if v.get("inventory_management") == "shopify"
-        )
+        managed = [v for v in variants if v.get("inventory_management") == "shopify"]
         unmanaged = [v for v in variants if v.get("inventory_management") != "shopify"]
-        if unmanaged and total_stock == 0:
+
+        # Unmanaged inventory = always available (no stock tracking)
+        if not managed:
+            return f"available|unlimited|{title}"
+
+        # Fetch real stock from inventory_levels API
+        inv_item_ids = [str(v["inventory_item_id"]) for v in managed if v.get("inventory_item_id")]
+        total_stock = 0
+        if inv_item_ids:
+            levels = await shopify_get(
+                "/inventory_levels.json",
+                params={"inventory_item_ids": ",".join(inv_item_ids), "limit": 250},
+            )
+            for level in levels.get("inventory_levels", []):
+                available = level.get("available")
+                if available is not None:
+                    total_stock += int(available)
+
+        if total_stock == 0 and unmanaged:
             return f"available|unlimited|{title}"
         if total_stock == 0:
             return f"out_of_stock|0|{title}"
@@ -420,29 +438,70 @@ async def _get_product_image_url(product_id) -> str:
 
 
 async def _browse_products(limit: int = 10) -> list[dict]:
-    """Fetch published products from Shopify for the browse catalog."""
+    """Fetch published products from Shopify for the browse catalog.
+
+    Uses /inventory_levels.json (the current Shopify API) for accurate stock
+    counts instead of the deprecated inventory_quantity field on variants.
+    Makes one batch call for all products to keep it fast.
+    """
     try:
         result = await shopify_get(
             "/products.json",
             params={"status": "active", "limit": limit, "fields": "id,title,variants,images"},
         )
         products = result.get("products", [])
+        if not products:
+            return []
+
+        # Collect all inventory_item_ids for first variants that are Shopify-managed
+        all_inv_item_ids = []
+        for p in products:
+            variants = p.get("variants", [])
+            fv = variants[0] if variants else {}
+            if fv.get("inventory_management") == "shopify" and fv.get("inventory_item_id"):
+                all_inv_item_ids.append(str(fv["inventory_item_id"]))
+
+        # Single batch call to inventory_levels for all products at once
+        stock_map: dict = {}  # inventory_item_id -> available qty
+        if all_inv_item_ids:
+            try:
+                levels_data = await shopify_get(
+                    "/inventory_levels.json",
+                    params={"inventory_item_ids": ",".join(all_inv_item_ids), "limit": 250},
+                )
+                for level in levels_data.get("inventory_levels", []):
+                    item_id = str(level.get("inventory_item_id", ""))
+                    available = level.get("available")
+                    if available is not None:
+                        stock_map[item_id] = stock_map.get(item_id, 0) + int(available)
+            except ShopifyAPIError:
+                pass
+
         out = []
         for p in products:
             variants = p.get("variants", [])
-            first_variant = variants[0] if variants else {}
-            price = first_variant.get("price", "0.00")
-            stock = int(first_variant.get("inventory_quantity") or 0)
-            managed = first_variant.get("inventory_management") == "shopify"
+            fv = variants[0] if variants else {}
+            price = fv.get("price", "0.00")
+            managed = fv.get("inventory_management") == "shopify"
+            inv_item_id = str(fv.get("inventory_item_id", ""))
             images = p.get("images", [])
+
+            if managed and inv_item_id:
+                stock = stock_map.get(inv_item_id, 0)
+                in_stock = stock > 0
+            else:
+                # Unmanaged = always available
+                stock = None
+                in_stock = True
+
             out.append({
                 "id": str(p.get("id", "")),
                 "title": p.get("title", ""),
                 "price": price,
                 "currency": "INR",
-                "variant_id": str(first_variant.get("id", "")),
-                "in_stock": (not managed) or stock > 0,
-                "stock": stock if managed else None,
+                "variant_id": str(fv.get("id", "")),
+                "in_stock": in_stock,
+                "stock": stock,
                 "image_url": images[0].get("src", "") if images else "",
             })
         return out
@@ -604,9 +663,8 @@ async def _execute_action(
             return "Sorry, I couldn't load our product catalog right now. Could you type the product name instead? 🙏", None
 
         rows = []
-        for p in products:
-            stock_tag = "In Stock" if p["in_stock"] else "Out of Stock"
-            desc = f"{p['currency']} {p['price']} · {stock_tag}"
+        for p in [p for p in products if p["in_stock"]]:
+            desc = f"{p['currency']} {p['price']} · In Stock"
             rows.append({
                 "id": f"select_product_{p['id']}",
                 "title": p["title"][:24],
@@ -1338,6 +1396,7 @@ async def process_whatsapp_message(
     current_message: str,
     merchant_id: str = None,
     customer_name: str = "",
+    has_media: bool = False,
 ) -> str | None:
     """Run the AI Sales Agent on an inbound WhatsApp message.
 
@@ -1345,6 +1404,8 @@ async def process_whatsapp_message(
     - GROQ_API_KEY is not set
     - An interactive button message was sent directly (handled here)
     - Agent fails
+
+    has_media: True when the customer's message contains an image or video.
     """
     # Check that at least one LLM provider is configured
     if not settings.groq_api_key and not settings.openai_api_key:
@@ -1352,6 +1413,24 @@ async def process_whatsapp_message(
         return None
 
     history = await _get_conversation_history(ticket_id)
+
+    # Hard guard: if the last agent action was ask_evidence and customer
+    # replied with text only (no photo/video), remind them immediately
+    # without wasting an AI call.
+    if not has_media:
+        for msg in reversed(history):
+            if msg.get("sender_type") != "customer":
+                action_ctx = msg.get("ai_action_context", "")
+                if "action=ask_evidence" in action_ctx:
+                    return {
+                        "reply": (
+                            "We still need a clear photo 📸 or video 🎥 of the product "
+                            "before we can process your request.\n\n"
+                            "Please upload the media and we'll get right on it! 🙏"
+                        ),
+                        "action_context": "action=ask_evidence",
+                    }
+                break  # only check the last agent message
 
     chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     prev_role = "system"

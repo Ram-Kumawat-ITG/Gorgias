@@ -317,11 +317,57 @@ async def approve_pending_action(ticket_id: str, agent=Depends(get_current_agent
             shopify_result = f"error: {e}"
 
     elif action_type == "refund" and order_id:
-        shopify_result = "refund_approved"
+        try:
+            from app.services.shopify_client import shopify_get as _shopify_get, shopify_post as _shopify_post
+            # Find the original paid transaction to refund against
+            txns = await _shopify_get(f"/orders/{order_id}/transactions.json")
+            parent_id = None
+            for t in txns.get("transactions", []):
+                if t.get("kind") in ("sale", "capture") and t.get("status") == "success":
+                    parent_id = t["id"]
+                    break
+            if parent_id:
+                order_data = await _shopify_get(f"/orders/{order_id}.json")
+                total_price = order_data.get("order", {}).get("total_price", "0.00")
+                refund_payload = {
+                    "refund": {
+                        "notify": True,
+                        "transactions": [{
+                            "parent_id": parent_id,
+                            "amount": total_price,
+                            "kind": "refund",
+                            "gateway": "manual",
+                        }],
+                    }
+                }
+                await _shopify_post(f"/orders/{order_id}/refunds.json", refund_payload)
+                shopify_result = "refunded"
+            else:
+                shopify_result = "refund_approved_no_transaction"
+        except Exception as e:
+            shopify_result = f"error: {e}"
+
     elif action_type == "replace" and order_id:
-        shopify_result = "replace_approved"
+        try:
+            from app.services.shopify_client import shopify_put as _shopify_put
+            await _shopify_put(
+                f"/orders/{order_id}.json",
+                {"order": {"tags": "replacement-requested", "note": "Replacement approved by admin via helpdesk."}},
+            )
+            shopify_result = "replacement_tagged"
+        except Exception as e:
+            shopify_result = f"error: {e}"
+
     elif action_type == "return" and order_id:
-        shopify_result = "return_approved"
+        try:
+            from app.services.shopify_client import shopify_put as _shopify_put
+            await _shopify_put(
+                f"/orders/{order_id}.json",
+                {"order": {"tags": "return-requested", "note": "Return approved by admin via helpdesk."}},
+            )
+            shopify_result = "return_tagged"
+        except Exception as e:
+            shopify_result = f"error: {e}"
     else:
         shopify_result = "approved"
 

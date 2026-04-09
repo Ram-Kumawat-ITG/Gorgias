@@ -1,8 +1,8 @@
-// Return detail page — full return info, timeline, tracking, admin actions
+// Return detail page — read-only view of return info, timeline, and policy check
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle, Truck, Package, XCircle, RotateCcw, X as XIcon, Ban, BarChart2,
+  ArrowLeft, CheckCircle, Truck, Package, XCircle, RotateCcw, Ban, BarChart2, ExternalLink,
 } from 'lucide-react';
 import api from '../api/client';
 import clsx from 'clsx';
@@ -18,27 +18,17 @@ const TIMELINE_ICONS = {
   requested: RotateCcw, approved: CheckCircle, shipped: Truck,
   received: Package, resolved: CheckCircle, rejected: XCircle, cancelled: Ban,
 };
-const VALID_TRANSITIONS = {
-  requested: ['approved', 'rejected'],
-  approved: ['shipped', 'rejected', 'cancelled'],
-  shipped: ['received', 'cancelled'],
-  received: [], resolved: [], rejected: [], cancelled: [],
-};
 
 export default function ReturnDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [ret, setRet] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState('');
-  const [statusNote, setStatusNote] = useState('');
-  const [trackingNumber, setTrackingNumber] = useState('');
-  const [courier, setCourier] = useState('');
   const [inventoryData, setInventoryData] = useState(null);   // null = not loaded
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [policy, setPolicy] = useState(null);
   const [policyLoading, setPolicyLoading] = useState(false);
-  const { toasts, addToast, addConfirmToast, removeToast } = useToast();
+  const { toasts, addToast, removeToast } = useToast();
 
   async function loadReturn() {
     setLoading(true);
@@ -58,50 +48,6 @@ export default function ReturnDetailPage() {
 
   useEffect(() => { loadReturn(); loadPolicy(); }, [id]);
 
-  async function updateStatus(newStatus) {
-    setActionLoading(newStatus);
-    try {
-      const res = await api.post(`/returns/${id}/status`, { status: newStatus, note: statusNote || undefined });
-      setStatusNote('');
-      if (newStatus === 'received' && res.data.resolution_result) {
-        const rr = res.data.resolution_result;
-        if (rr.error) addToast(`Received but resolution failed: ${rr.error}`, 'error');
-        else addToast('Item received — resolution processed!');
-      } else {
-        addToast(`Status → ${newStatus}`);
-      }
-      await loadReturn();
-      await loadPolicy();
-    } catch (err) {
-      addToast(err.response?.data?.detail || 'Failed', 'error');
-    } finally { setActionLoading(''); }
-  }
-
-  async function addTracking() {
-    if (!trackingNumber || !courier) { addToast('Enter tracking number and courier', 'error'); return; }
-    setActionLoading('tracking');
-    try {
-      await api.post(`/returns/${id}/tracking`, { tracking_number: trackingNumber, courier });
-      setTrackingNumber(''); setCourier('');
-      addToast('Tracking added — status updated to shipped');
-      await loadReturn();
-    } catch (err) {
-      addToast(err.response?.data?.detail || 'Failed', 'error');
-    } finally { setActionLoading(''); }
-  }
-
-  async function cancelReturn() {
-    addConfirmToast('Cancel this return request?', async () => {
-      try {
-        await api.post(`/returns/${id}/cancel`);
-        addToast('Return cancelled');
-        await loadReturn();
-      } catch (err) {
-        addToast(err.response?.data?.detail || 'Failed', 'error');
-      }
-    });
-  }
-
   async function loadInventory() {
     setInventoryLoading(true);
     try {
@@ -112,24 +58,8 @@ export default function ReturnDetailPage() {
     } finally { setInventoryLoading(false); }
   }
 
-  function handleDelete() {
-    addConfirmToast('Delete this return?', async () => {
-      try {
-        await api.delete(`/returns/${id}`);
-        addToast('Deleted');
-        setTimeout(() => navigate('/returns'), 500);
-      } catch (err) {
-        addToast(err.response?.data?.detail || 'Failed', 'error');
-      }
-    });
-  }
-
   if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand-600 rounded-full animate-spin" /></div>;
   if (!ret) return <div className="p-8 text-center text-gray-400">Return not found</div>;
-
-  const nextStatuses = VALID_TRANSITIONS[ret.status] || [];
-  const canCancel = ['requested', 'approved', 'shipped'].includes(ret.status);
-  const needsTracking = ret.status === 'approved' && !ret.tracking_number;
 
   return (
     <div>
@@ -142,6 +72,22 @@ export default function ReturnDetailPage() {
             <span className="badge bg-gray-100 text-gray-600 capitalize">{ret.resolution}</span>
           </div>
           <p className="text-sm text-gray-500 mt-0.5">Order #{ret.order_number} · {ret.customer_name || ret.customer_email}</p>
+        </div>
+      </div>
+
+      {/* Read-only notice */}
+      <div className="mb-6 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+        <span className="text-blue-500 mt-0.5 shrink-0">ℹ️</span>
+        <div className="flex-1 text-sm text-blue-800">
+          <span className="font-semibold">View-only</span> — return records are managed automatically. Admin actions (approve / reject / ship) are taken from the{' '}
+          {ret.ticket_id ? (
+            <button onClick={() => navigate(`/tickets/${ret.ticket_id}`)}
+              className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline">
+              source ticket <ExternalLink size={12} />
+            </button>
+          ) : (
+            <span className="font-semibold">linked support ticket</span>
+          )}.
         </div>
       </div>
 
@@ -191,33 +137,6 @@ export default function ReturnDetailPage() {
                   </a>
                 ))}
               </div>
-
-              {/* Verify & decide — shown only when admin hasn't acted yet */}
-              {ret.status === 'requested' && (
-                <div className="mt-4 pt-4 border-t border-gray-100">
-                  <p className="text-xs text-gray-500 mb-3">
-                    Review the images above, then approve or reject this return.
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => updateStatus('approved')}
-                      disabled={!!actionLoading}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors disabled:opacity-50"
-                    >
-                      <CheckCircle size={14} />
-                      {actionLoading === 'approved' ? 'Approving...' : 'Approve Return'}
-                    </button>
-                    <button
-                      onClick={() => updateStatus('rejected')}
-                      disabled={!!actionLoading}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
-                    >
-                      <XIcon size={14} />
-                      {actionLoading === 'rejected' ? 'Rejecting...' : 'Reject Return'}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -399,68 +318,6 @@ export default function ReturnDetailPage() {
             )}
           </div>
 
-          {/* Tracking input (shown after approval, before tracking is added) */}
-          {needsTracking && (
-            <div className="card p-4 space-y-3">
-              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Add Return Tracking</h2>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Courier</label>
-                <select value={courier} onChange={e => setCourier(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                  <option value="">Select courier...</option>
-                  {['FedEx', 'UPS', 'USPS', 'DHL', 'BlueDart', 'DTDC', 'Delhivery', 'India Post', 'Other'].map(c =>
-                    <option key={c} value={c}>{c}</option>
-                  )}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Tracking Number</label>
-                <input type="text" value={trackingNumber} onChange={e => setTrackingNumber(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-              </div>
-              <button onClick={addTracking} disabled={!!actionLoading}
-                className="btn-primary w-full text-sm flex items-center justify-center gap-2">
-                <Truck size={14} /> {actionLoading === 'tracking' ? 'Adding...' : 'Add Tracking & Mark Shipped'}
-              </button>
-            </div>
-          )}
-
-          {/* Status actions */}
-          {nextStatuses.length > 0 && (
-            <div className="card p-4 space-y-3">
-              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Actions</h2>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Note (optional)</label>
-                <input type="text" value={statusNote} onChange={e => setStatusNote(e.target.value)}
-                  placeholder="Add a note..."
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-              </div>
-              <div className="space-y-2">
-                {nextStatuses.filter(s => s !== 'cancelled').map(ns => (
-                  <button key={ns} onClick={() => updateStatus(ns)} disabled={!!actionLoading}
-                    className={clsx('w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50',
-                      ns === 'rejected' ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
-                        : ns === 'received' ? 'bg-brand-600 text-white hover:bg-brand-700'
-                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50')}>
-                    {actionLoading === ns ? 'Processing...' :
-                      ns === 'approved' ? 'Approve Return' :
-                      ns === 'rejected' ? 'Reject Return' :
-                      ns === 'shipped' ? 'Mark as Shipped' :
-                      ns === 'received' ? 'Mark as Received at Warehouse' : ns}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Cancel return */}
-          {canCancel && (
-            <button onClick={cancelReturn} disabled={!!actionLoading}
-              className="btn-secondary w-full text-sm text-red-600 border-red-200 hover:bg-red-50 flex items-center justify-center gap-2">
-              <Ban size={14} /> Cancel Return
-            </button>
-          )}
-
           {/* Info */}
           <div className="card p-4 space-y-2 text-sm">
             <h2 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Details</h2>
@@ -484,9 +341,6 @@ export default function ReturnDetailPage() {
             <div className="text-xs text-gray-400 pt-2 border-t border-gray-100">ID: {ret.id}</div>
           </div>
 
-          {ret.status !== 'resolved' && (
-            <button onClick={handleDelete} className="btn-secondary w-full text-sm text-gray-500 hover:text-red-600">Delete Return</button>
-          )}
         </div>
       </div>
 

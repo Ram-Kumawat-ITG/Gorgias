@@ -2,6 +2,7 @@ import { useState, useEffect, Component, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { aiApi, ordersApi, customersApi, channelsApi, ticketsApi, shopifyApi } from '../api/client'
 import AiBanner from '../components/AiBanner'
+import QuickActionPanel from '../components/QuickActionPanel'
 import clsx from 'clsx'
 
 // ── Error Boundary — prevents blank page on any render-time throw ─────────────
@@ -1070,55 +1071,14 @@ export default function RequestPage() {
                     </div>
                   )}
 
-                  {!showRejectInput ? (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={approveAction}
-                        disabled={actionLoading}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-                      >
-                        {actionLoading ? (
-                          <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing…</>
-                        ) : (
-                          <><span>✅</span> Approve Request</>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => setShowRejectInput(true)}
-                        disabled={actionLoading}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 disabled:opacity-50 transition-colors"
-                      >
-                        <span>❌</span> Reject Request
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={rejectReason}
-                        onChange={e => setRejectReason(e.target.value)}
-                        placeholder="Rejection reason (optional — sent to customer)"
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={rejectAction}
-                          disabled={actionLoading}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
-                        >
-                          {actionLoading ? (
-                            <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Rejecting…</>
-                          ) : 'Confirm Reject'}
-                        </button>
-                        <button
-                          onClick={() => { setShowRejectInput(false); setRejectReason('') }}
-                          className="px-4 py-2 rounded-lg bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <QuickActionPanel
+                    ticket={selectedTicket}
+                    messages={messages.map(m => ({ ...m, body: m.message || m.body || '' }))}
+                    onActionComplete={async () => {
+                      const res = await ticketsApi.get(selectedTicket.id);
+                      if (res.data) setSelectedTicket(res.data);
+                    }}
+                  />
                 </div>
               )}
 

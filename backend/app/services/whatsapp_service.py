@@ -23,11 +23,11 @@ async def get_whatsapp_config(merchant_id: str = None) -> dict:
                 "verify_token": merchant["whatsapp_verify_token"],
             }
     return {
-        "phone_number_id": settings.whatsapp_phone_number_id,
-        "access_token": settings.whatsapp_access_token,
-        "app_secret": settings.whatsapp_app_secret,
-        "waba_id": settings.whatsapp_waba_id,
-        "verify_token": settings.whatsapp_verify_token,
+        "phone_number_id": (settings.whatsapp_phone_number_id or "").strip(),
+        "access_token": (settings.whatsapp_access_token or "").strip(),
+        "app_secret": (settings.whatsapp_app_secret or "").strip(),
+        "waba_id": (settings.whatsapp_waba_id or "").strip(),
+        "verify_token": (settings.whatsapp_verify_token or "").strip(),
     }
 
 
