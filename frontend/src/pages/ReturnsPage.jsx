@@ -154,16 +154,26 @@ export default function ReturnsPage() {
           </h2>
           <div className="card divide-y divide-gray-50">
             {returnTickets.map(t => (
-              <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)}
-                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors group">
-                <div className="min-w-0 flex-1">
+              <div key={t.id}
+                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+                <div className="min-w-0 flex-1 cursor-pointer" onClick={() => navigate(`/requests?ticket=${t.id}`)}>
                   <p className="text-sm font-medium text-gray-900 truncate">{t.subject}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{t.customer_email}</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 ml-3">
+                  {t.shopify_order_number && (
+                    <button
+                      onClick={e => { e.stopPropagation(); navigate(`/orders/${t.shopify_order_id}`); }}
+                      className="text-xs text-brand-600 hover:underline font-medium"
+                    >
+                      Order #{t.shopify_order_number}
+                    </button>
+                  )}
                   <span className="badge bg-yellow-100 text-yellow-700">needs review</span>
                   <span className="text-xs text-gray-400">{t.created_at ? new Date(t.created_at).toLocaleDateString() : ''}</span>
-                  <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-500" />
+                  <button onClick={() => navigate(`/requests?ticket=${t.id}`)} className="text-gray-300 hover:text-gray-500">
+                    <ChevronRight size={16} />
+                  </button>
                 </div>
               </div>
             ))}

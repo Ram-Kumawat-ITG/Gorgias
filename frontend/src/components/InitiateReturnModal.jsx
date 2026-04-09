@@ -14,7 +14,7 @@ const REASONS = [
   { value: 'other', label: 'Other' },
 ];
 
-export default function InitiateReturnModal({ order, onClose, onSuccess }) {
+export default function InitiateReturnModal({ order, onClose, onSuccess, ticketId = null }) {
   const [selectedItems, setSelectedItems] = useState(
     (order.line_items || []).map(li => ({ ...li, selected: false, returnQty: li.quantity }))
   );
@@ -57,6 +57,7 @@ export default function InitiateReturnModal({ order, onClose, onSuccess }) {
         reason,
         reason_notes: reasonNotes || undefined,
         resolution,
+        ticket_id: ticketId || undefined,
       });
       onSuccess();
     } catch (err) {

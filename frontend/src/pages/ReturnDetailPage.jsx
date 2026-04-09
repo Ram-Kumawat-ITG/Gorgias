@@ -472,6 +472,14 @@ export default function ReturnDetailPage() {
             <div className="flex justify-between"><span className="text-gray-500">Resolution</span><span className="capitalize">{ret.resolution}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Initiated by</span><span className="capitalize">{ret.initiated_by}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Created</span><span className="text-xs">{ret.created_at ? new Date(ret.created_at).toLocaleString() : '—'}</span></div>
+            {ret.ticket_id && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Source Ticket</span>
+                <button onClick={() => navigate(`/tickets/${ret.ticket_id}`)} className="text-brand-600 hover:underline text-xs">
+                  View ticket →
+                </button>
+              </div>
+            )}
             {ret.return_tag && <div className="flex justify-between"><span className="text-gray-500">Shopify Tag</span><span className="badge bg-gray-100 text-gray-600">{ret.return_tag}</span></div>}
             <div className="text-xs text-gray-400 pt-2 border-t border-gray-100">ID: {ret.id}</div>
           </div>

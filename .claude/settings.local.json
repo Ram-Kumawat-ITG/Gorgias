@@ -14,7 +14,9 @@
       "Bash(grep -r \"Depends\\\\|FastAPI\\\\|dependency\" /c/Gorgias/shopify-helpdesk/backend/app/routers/*.py --include=\"*.py\")",
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(grep \"\\\\.py$\")",
-      "Bash(find /c/Gorgias/shopify-helpdesk/frontend/src -type f -name *.jsx -o -name *.js)"
+      "Bash(find /c/Gorgias/shopify-helpdesk/frontend/src -type f -name *.jsx -o -name *.js)",
+      "Bash(grep -E \"\\\\.\\(jsx|py|ts\\)$\")",
+      "Bash(grep -n ticket_type C:Gorgiasshopify-helpdesk/backend/app/models*)"
     ]
   }
 }

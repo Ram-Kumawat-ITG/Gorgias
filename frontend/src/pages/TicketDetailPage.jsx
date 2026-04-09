@@ -194,6 +194,23 @@ export default function TicketDetailPage() {
               <span className="text-xs text-gray-400">@{ticket.twitter_username}</span>
             )} */}
           </div>
+          {/* Return action banner */}
+          {ticket.ticket_type === 'return' && (
+            <div className="mt-2 flex items-center gap-3 p-2.5 rounded-lg bg-orange-50 border border-orange-200">
+              <span className="text-xs text-orange-800">Return request — formal return not yet initiated</span>
+              {ticket.shopify_order_id ? (
+                <button
+                  onClick={() => navigate(`/orders/${ticket.shopify_order_id}`)}
+                  className="ml-auto text-xs font-medium text-brand-600 hover:underline shrink-0"
+                >
+                  Open Order #{ticket.shopify_order_number || ticket.shopify_order_id} →
+                </button>
+              ) : (
+                <span className="ml-auto text-xs text-gray-400">No order linked</span>
+              )}
+            </div>
+          )}
+
           {ticket.channel === 'whatsapp' && ticket.whatsapp_last_customer_msg_at && (
             <div className="mt-1">
               {(() => {

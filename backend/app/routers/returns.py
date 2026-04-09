@@ -371,6 +371,7 @@ async def create_return(data: ReturnCreate, agent=Depends(get_current_agent)):
         items=[item.model_dump() for item in data.items],
         reason=data.reason, reason_notes=data.reason_notes,
         resolution=data.resolution, return_tag=tag,
+        ticket_id=data.ticket_id or None,
         images=data.images or [],
         status_history=[{
             "status": "requested", "timestamp": datetime.now(timezone.utc),

@@ -50,6 +50,7 @@ class ReturnCreate(BaseModel):
     reason_notes: Optional[str] = None
     resolution: str
     images: Optional[List[str]] = []  # customer-submitted image URLs (WhatsApp/chatbot)
+    ticket_id: Optional[str] = None   # originating ticket (for traceability)
 
 
 class ReturnStatusUpdate(BaseModel):
@@ -87,6 +88,7 @@ class ReturnInDB(BaseModel):
     resolved_at: Optional[datetime] = None
     refund_id: Optional[str] = None
     replacement_order_id: Optional[str] = None
+    ticket_id: Optional[str] = None   # originating ticket (for traceability)
     images: List[str] = []  # customer-submitted image URLs (WhatsApp/chatbot)
     return_tag: Optional[str] = None  # current tag on the Shopify order
     created_at: datetime = Field(default_factory=datetime.utcnow)

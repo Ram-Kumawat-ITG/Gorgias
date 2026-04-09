@@ -295,6 +295,28 @@ export default function RequestPage() {
       .finally(() => setTicketsLoading(false))
   }, [activeChannel, activeStatus, currentPage, search])
 
+  // Auto-select ticket from URL param ?ticket=<id> (e.g. navigated from Returns page)
+  useEffect(() => {
+    const ticketId = searchParams.get('ticket')
+    if (!ticketId || selectedId === ticketId) return
+    ticketsApi.get(ticketId)
+      .then(res => {
+        if (res.data) {
+          setSelectedId(ticketId)
+          setSelectedTicket(res.data)
+          setAiResult(null)
+          setAiError('')
+          setAiProcessResult(null)
+          setEditableData({})
+          setActiveActionIndex(null)
+          setActionResult({})
+          setShowRejectInput(false)
+          setRejectReason('')
+        }
+      })
+      .catch(() => {})
+  }, [searchParams])
+
   // Load messages for the selected ticket
   useEffect(() => {
     if (!selectedId) { setMessages([]); return }
